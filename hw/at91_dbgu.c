@@ -69,6 +69,7 @@
 
 typedef struct DBGUState {
     SysBusDevice busdev;
+    MemoryRegion ser_regs_region;
     CharDriverState *chr;
     qemu_irq irq;
     uint32_t chipid;
@@ -104,7 +105,7 @@ static void at91_dbgu_update_parameters(DBGUState *s)
     ssp.parity = 'O';
     ssp.data_bits = 8;
     ssp.stop_bits = 1;
-    qemu_chr_ioctl(s->chr, CHR_IOCTL_SERIAL_SET_PARAMS, &ssp);
+    qemu_chr_fe_ioctl(s->chr, CHR_IOCTL_SERIAL_SET_PARAMS, &ssp);
 }
 
 static void at91_dbgu_receive(void *opaque, const uint8_t *buf, int size)
@@ -137,7 +138,7 @@ static void at91_dbgu_event(void *opaque, int event)
 {
 }
 
-static uint32_t at91_dbgu_mem_read(void *opaque, target_phys_addr_t offset)
+static uint64_t at91_dbgu_mem_read(void *opaque, target_phys_addr_t offset, unsigned size)
 {
     DBGUState *s = opaque;
     uint32_t value;
@@ -171,7 +172,7 @@ static uint32_t at91_dbgu_mem_read(void *opaque, target_phys_addr_t offset)
 }
 
 static void at91_dbgu_mem_write(void *opaque, target_phys_addr_t offset,
-                uint32_t value)
+                uint64_t value, unsigned size)
 {
     DBGUState *s = opaque;
     unsigned char ch = value;
@@ -207,7 +208,7 @@ static void at91_dbgu_mem_write(void *opaque, target_phys_addr_t offset,
         {
             /* TODO: shift register, error checking */
             s->thr = value;
-            qemu_chr_write(s->chr, &ch, 1);
+            qemu_chr_fe_write(s->chr, &ch, 1);
             s->sr |= SR_TXRDY | SR_TXBUFE | SR_TXEMPTY;
         }
         break;
@@ -228,74 +229,27 @@ static void at91_dbgu_mem_write(void *opaque, target_phys_addr_t offset,
 }
 
 #ifdef DEBUG_DBGU
-static uint32_t at91_dbgu_mem_read_dbg(void *opaque, target_phys_addr_t offset)
+static uint64_t at91_dbgu_mem_read_dbg(void *opaque, target_phys_addr_t offset, unsigned size)
 {
-    uint32_t value = at91_dbgu_mem_read(opaque, offset);
+    uint32_t value = at91_dbgu_mem_read(opaque, offset, size);
     printf("%s offset=%x val=%x\n", __func__, offset & (DBGU_SIZE - 1), value);
     return value;
 }
 
 static void at91_dbgu_mem_write_dbg(void *opaque, target_phys_addr_t offset,
-                uint32_t value)
+                uint64_t value, unsigned size)
 {
     printf("%s offset=%x val=%x\n", __func__, offset & (DBGU_SIZE - 1), value);
-    at91_dbgu_mem_write(opaque, offset, value);
+    at91_dbgu_mem_write(opaque, offset, value, size);
 }
 
 #define at91_dbgu_mem_read at91_dbgu_mem_read_dbg
 #define at91_dbgu_mem_write at91_dbgu_mem_write_dbg
 #endif
 
-static CPUReadMemoryFunc *at91_dbgu_readfn[] = {
-    at91_dbgu_mem_read,
-    at91_dbgu_mem_read,
-    at91_dbgu_mem_read,
-};
-
-static CPUWriteMemoryFunc *at91_dbgu_writefn[] = {
-    at91_dbgu_mem_write,
-    at91_dbgu_mem_write,
-    at91_dbgu_mem_write,
-};
-
-static void at91_dbgu_save(QEMUFile *f, void *opaque)
+static void at91_dbgu_reset(DeviceState *d)
 {
-    DBGUState *s = opaque;
-//TODO: save pdc state
-    qemu_put_byte(f, s->rx_enabled);
-    qemu_put_byte(f, s->tx_enabled);
-    qemu_put_be32(f, s->mr);
-    qemu_put_be32(f, s->imr);
-    qemu_put_be32(f, s->sr);
-    qemu_put_byte(f, s->rhr);
-    qemu_put_byte(f, s->thr);
-    qemu_put_be16(f, s->brgr);
-    qemu_put_be32(f, s->fnr);
-}
-
-static int at91_dbgu_load(QEMUFile *f, void *opaque, int version_id)
-{
-    DBGUState *s = opaque;
-
-    if (version_id != 1)
-        return -EINVAL;
-//TODO: load pdc state
-    s->rx_enabled = qemu_get_byte(f);
-    s->tx_enabled = qemu_get_byte(f);
-    s->mr = qemu_get_be32(f);
-    s->imr = qemu_get_be32(f);
-    s->sr = qemu_get_be32(f);
-    s->rhr = qemu_get_byte(f);
-    s->thr = qemu_get_byte(f);
-    s->brgr = qemu_get_be16(f);
-    s->fnr = qemu_get_be32(f);
-
-    return 0;
-}
-
-static void at91_dbgu_reset(void *opaque)
-{
-    DBGUState *s = opaque;
+    DBGUState *s = container_of(d, DBGUState, busdev.qdev);
 
     s->rx_enabled = 0;
     s->tx_enabled = 0;
@@ -323,7 +277,7 @@ static int pdc_start_transfer(void *opaque,
 #ifdef DEBUG_DBGU
     printf("%s: begin, tx_len %u, rx_len %u\n", __func__, *tx_len, *rx_len);
 #endif
-    //TODO: implement recieving
+    //TODO: implement receiving
     if (*rx_len && *tx_len == 0) {
         if (s->sr & SR_RXRDY)  {
             tmp = s->rhr & 0xFF;
@@ -337,7 +291,7 @@ static int pdc_start_transfer(void *opaque,
     }
     for (i = 0; i < *tx_len; ++i) {
         cpu_physical_memory_read(tx + i, &tmp, 1);
-        at91_dbgu_mem_write(s, DBGU_THR, tmp);
+        at91_dbgu_mem_write(s, DBGU_THR, tmp, 1);
     }
     *tx_len = 0;
 
@@ -375,50 +329,74 @@ static void pdc_state_changed(void *opaque, unsigned int state)
 }
 
 
-static void at91_dbgu_init(SysBusDevice *dev)
+static const MemoryRegionOps at91_dbgu_mmio_ops = {
+    .read = at91_dbgu_mem_read,
+    .write = at91_dbgu_mem_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+};
+
+static int at91_dbgu_init(SysBusDevice *dev)
 {
     DBGUState *s = FROM_SYSBUS(typeof (*s), dev);
-    int ser_regs;
 
     s->pdc_state = at91_pdc_init(s, pdc_start_transfer, pdc_state_changed);
     sysbus_init_irq(dev, &s->irq);
-    ser_regs = cpu_register_io_memory(at91_dbgu_readfn, at91_dbgu_writefn, s);
-    sysbus_init_mmio(dev, DBGU_SIZE, ser_regs);
-    s->chr = qdev_init_chardev(&dev->qdev);
-    if (s->chr) {
-        qemu_chr_add_handlers(s->chr, at91_dbgu_can_receive,
-                              at91_dbgu_receive, at91_dbgu_event, s);
-    }
+    memory_region_init_io(&s->ser_regs_region, &at91_dbgu_mmio_ops, s,
+            "at91,dbgu", DBGU_SIZE);
+    sysbus_init_mmio(dev, &s->ser_regs_region);
 
-    at91_dbgu_reset(s);
-    qemu_register_reset(at91_dbgu_reset, s);
-
-    register_savevm("at91_dbgu", -1, 1, at91_dbgu_save, at91_dbgu_load, s);
+    qemu_chr_add_handlers(s->chr, at91_dbgu_can_receive,
+                          at91_dbgu_receive, at91_dbgu_event, s);
+    return 0;
 }
 
-static SysBusDeviceInfo at91_dbgu_info = {
-    .init = at91_dbgu_init,
-    .qdev.name  = "at91,dbgu",
-    .qdev.size  = sizeof(DBGUState),
-    .qdev.props = (Property[]) {
-        {
-            .name   = "chipid",
-            .info   = &qdev_prop_uint32,
-            .offset = offsetof(DBGUState, chipid),
-            .defval = (uint32_t[]) { DEFAULT_CHIPID },
-        },
-        {
-            .name   = "chipid-ext",
-            .info   = &qdev_prop_uint32,
-            .offset = offsetof(DBGUState, chipid_ext)
-        },
-        {/* end of list */}
+static const VMStateDescription vmstate_at91_dbgu = {
+    .name = "at91,dbgu",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+//TODO: save pdc state
+    .fields      = (VMStateField[]) {
+        VMSTATE_UINT8(rx_enabled, DBGUState),
+        VMSTATE_UINT8(tx_enabled, DBGUState),
+        VMSTATE_UINT32(mr, DBGUState),
+        VMSTATE_UINT32(imr, DBGUState),
+        VMSTATE_UINT32(sr, DBGUState),
+        VMSTATE_UINT8(rhr, DBGUState),
+        VMSTATE_UINT8(thr, DBGUState),
+        VMSTATE_UINT16(brgr, DBGUState),
+        VMSTATE_UINT32(fnr, DBGUState),
+        VMSTATE_END_OF_LIST()
     }
 };
+static Property at91_dbgu_properties[] = {
+    DEFINE_PROP_CHR("chardev", DBGUState, chr),
+    DEFINE_PROP_UINT32("chipid", DBGUState, chipid, DEFAULT_CHIPID),
+    DEFINE_PROP_UINT32("chipid-ext", DBGUState, chipid_ext, 0),
+    DEFINE_PROP_END_OF_LIST(),
+};
 
-static void at91_dbgu_register(void)
+static void at91_dbgu_class_init(ObjectClass *klass, void *data)
 {
-    sysbus_register_withprop(&at91_dbgu_info);
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = at91_dbgu_init;
+    dc->reset = at91_dbgu_reset;
+    dc->props = at91_dbgu_properties;
+    dc->vmsd = &vmstate_at91_dbgu;
 }
 
-device_init(at91_dbgu_register)
+static TypeInfo at91_dbgu_info = {
+    .name  = "at91,dbgu",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size  = sizeof(DBGUState),
+    .class_init    = at91_dbgu_class_init,
+};
+
+static void at91_dbgu_register_types(void)
+{
+    type_register_static(&at91_dbgu_info);
+}
+
+type_init(at91_dbgu_register_types)
