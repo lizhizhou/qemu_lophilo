@@ -397,8 +397,8 @@ obj-arm-y += collie.o
 obj-arm-y += pl041.o lm4549.o
 obj-arm-$(CONFIG_FDT) += device_tree.o
 obj-arm-y += at91_aic.o at91_dbgu.o at91_pdc.o at91_pmc.o at91_pit.o 
-obj-arm-y += at91_intor.o
-# at91_emac.c   at91_lcdc.c   at91_pio.c   at91_rtt.c  at91_spi.c
+obj-arm-y += at91_intor.o at91_emac.c   
+# at91_lcdc.c   at91_pio.c   at91_rtt.c  at91_spi.c
 # at91_nand.c  at91pes.c    at91_rstc.c  at91sam9.c  at91_tc.c
 
 

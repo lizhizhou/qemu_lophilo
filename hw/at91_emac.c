@@ -125,6 +125,7 @@
 typedef struct EMACState
 {
     SysBusDevice busdev;
+    MemoryRegion emac_regs_region;
     qemu_irq irq;
     VLANClientState *vc;
 
@@ -447,7 +448,7 @@ static uint32_t at91_emac_mem_read(void *opaque, target_phys_addr_t offset)
 }
 
 static void at91_emac_mem_write(void *opaque, target_phys_addr_t offset,
-                uint32_t value)
+                uint64_t value, unsigned size)
 {
     EMACState *s = opaque;
 
@@ -556,15 +557,15 @@ static void at91_emac_mem_write(void *opaque, target_phys_addr_t offset,
 }
 
 #ifdef DEBUG_EMAC
-static uint32_t at91_emac_mem_read_dbg(void *opaque, target_phys_addr_t offset)
+static uint64_t at91_emac_mem_read_dbg(void *opaque, target_phys_addr_t offset, unsigned size)
 {
-    uint32_t value = at91_emac_mem_read(opaque, offset);
+    uint32_t value = at91_emac_mem_read(opaque, offset, size);
     printf("%s offset=%x val=%x\n", __func__, offset, value);
     return value;
 }
 
 static void at91_emac_mem_write_dbg(void *opaque, target_phys_addr_t offset,
-                uint32_t value)
+                uint64_t value, unsigned size)
 {
     printf("%s offset=%x val=%x\n", __func__, offset, value);
     at91_emac_mem_write(opaque, offset, value);
@@ -574,90 +575,15 @@ static void at91_emac_mem_write_dbg(void *opaque, target_phys_addr_t offset,
 #define at91_emac_mem_write at91_emac_mem_write_dbg
 #endif
 
-static CPUReadMemoryFunc *at91_emac_readfn[] = {
-    at91_emac_mem_read,
-    at91_emac_mem_read,
-    at91_emac_mem_read
+static const MemoryRegionOps at91_emac_mmio_ops = {
+    .read = at91_emac_mem_read,
+    .write = at91_emac_mem_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
-static CPUWriteMemoryFunc *at91_emac_writefn[] = {
-    at91_emac_mem_write,
-    at91_emac_mem_write,
-    at91_emac_mem_write
-};
-
-static void at91_emac_save(QEMUFile *f, void *opaque)
+static void at91_emac_reset(DeviceState *d)
 {
-    EMACState *s = opaque;
-
-    qemu_put_be32(f, s->ctl);
-    qemu_put_be32(f, s->cfg);
-    qemu_put_be32(f, s->sr);
-    qemu_put_be32(f, s->tar);
-    qemu_put_be32(f, s->tcr);
-    qemu_put_be32(f, s->tsr);
-    qemu_put_be32(f, s->rbqp);
-    qemu_put_be32(f, s->rbqp_base);
-    qemu_put_be32(f, s->tbqp);
-    qemu_put_be32(f, s->tbqp_base);
-    qemu_put_be32(f, s->rsr);
-    qemu_put_be32(f, s->isr);
-    qemu_put_be32(f, s->imr);
-    qemu_put_be32(f, s->man);
-
-    qemu_put_be32(f, s->hsl);
-    qemu_put_be16(f, s->hsh);
-    qemu_put_be32(f, s->sa1l);
-    qemu_put_be16(f, s->sa1h);
-    qemu_put_be32(f, s->sa2l);
-    qemu_put_be16(f, s->sa2h);
-    qemu_put_be32(f, s->sa3l);
-    qemu_put_be16(f, s->sa3h);
-    qemu_put_be32(f, s->sa4l);
-    qemu_put_be16(f, s->sa4h);
-    qemu_put_byte(f, s->sa_valid);
-}
-
-static int at91_emac_load(QEMUFile *f, void *opaque, int version_id)
-{
-    EMACState *s = opaque;
-
-    if (version_id != 1)
-        return -EINVAL;
-
-    s->ctl = qemu_get_be32(f);
-    s->cfg = qemu_get_be32(f);
-    s->sr = qemu_get_be32(f);
-    s->tar = qemu_get_be32(f);
-    s->tcr = qemu_get_be32(f);
-    s->tsr = qemu_get_be32(f);
-    s->rbqp = qemu_get_be32(f);
-    s->rbqp_base = qemu_get_be32(f);
-    s->tbqp = qemu_get_be32(f);
-    s->tbqp_base = qemu_get_be32(f);
-    s->rsr = qemu_get_be32(f);
-    s->isr = qemu_get_be32(f);
-    s->imr = qemu_get_be32(f);
-    s->man = qemu_get_be32(f);
-
-    s->hsl = qemu_get_be32(f);
-    s->hsh = qemu_get_be16(f);
-    s->sa1l = qemu_get_be32(f);
-    s->sa1h = qemu_get_be16(f);
-    s->sa2l = qemu_get_be32(f);
-    s->sa2h = qemu_get_be16(f);
-    s->sa3l = qemu_get_be32(f);
-    s->sa3h = qemu_get_be16(f);
-    s->sa4l = qemu_get_be32(f);
-    s->sa4h = qemu_get_be16(f);
-    s->sa_valid = qemu_get_byte(f);
-
-    return 0;
-}
-
-static void at91_emac_reset(void *opaque)
-{
-    EMACState *s = opaque;
+    EMACState *s = container_of(d, EMACState, busdev.qdev);
 
     s->ctl = 0;
     s->cfg = CFG_CLK_HCLK_32;
@@ -689,26 +615,75 @@ static void at91_emac_reset(void *opaque)
 static void at91_emac_init(SysBusDevice *dev)
 {
     EMACState *s = FROM_SYSBUS(typeof (*s), dev);
-    int mmio_index;
 
     sysbus_init_irq(dev, &s->irq);
     s->vc = qdev_get_vlan_client(&dev->qdev,
                                  at91_emac_can_receive,
                                  at91_emac_receive,
                                  NULL, NULL, s);
-    mmio_index = cpu_register_io_memory(at91_emac_readfn,
-                                        at91_emac_writefn, s);
-    sysbus_init_mmio(dev, EMAC_SIZE, mmio_index);
-
-    at91_emac_reset(s);
-    qemu_register_reset(at91_emac_reset, s);
-
-    register_savevm("at91_emac", -1, 1, at91_emac_save, at91_emac_load, s);
+    memory_region_init_io(&s->emac_regs_region, &at91_emac_mmio_ops, s,
+            "at91,emac", EMAC_SIZE);
+    sysbus_init_mmio(dev, &s->emac_regs_region);
 }
 
-static void at91_emac_register(void)
+static const VMStateDescription vmstate_at91_emac = {
+    .name = "at91,emac",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField[]) {
+        VMSTATE_UINT32(ctl, EMACState),
+        VMSTATE_UINT32(cfg, EMACState),
+        VMSTATE_UINT32(sr, EMACState),
+        VMSTATE_UINT32(tar, EMACState),
+        VMSTATE_UINT32(tcr, EMACState),
+        VMSTATE_UINT32(tsr, EMACState),
+        VMSTATE_UINT32(rbqp, EMACState),
+        VMSTATE_UINT32(rbqp_base, EMACState),
+        VMSTATE_UINT32(tbqp, EMACState),
+        VMSTATE_UINT32(tbqp_base, EMACState),
+        VMSTATE_UINT32(rsr, EMACState),
+        VMSTATE_UINT32(isr, EMACState),
+        VMSTATE_UINT32(imr, EMACState),
+        VMSTATE_UINT32(man, EMACState),
+
+        VMSTATE_UINT32(hsl, EMACState),
+        VMSTATE_UINT16(hsh, EMACState),
+        VMSTATE_UINT32(sa1l, EMACState),
+        VMSTATE_UINT16(sa1h, EMACState),
+        VMSTATE_UINT32(sa2l, EMACState),
+        VMSTATE_UINT16(sa2h, EMACState),
+        VMSTATE_UINT32(sa3l, EMACState),
+        VMSTATE_UINT16(sa3h, EMACState),
+        VMSTATE_UINT32(sa4l, EMACState),
+        VMSTATE_UINT16(sa4h, EMACState),
+        VMSTATE_BYTE(sa_valid, EMACState),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static int at91_emac_class_init(ObjectClass *klass, void *data)
 {
-    sysbus_register_dev("at91,emac", sizeof(EMACState), at91_emac_init);
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = at91_emac_init;
+    dc->reset = at91_emac_reset;
+    dc->vmsd = &vmstate_at91_emac;
+
+    return 0;
 }
 
-device_init(at91_emac_register)
+static TypeInfo at91_emac_info = {
+    .name          = "at91,emac",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(EMACState),
+    .class_init    = at91_emac_class_init,
+};
+
+static void at91_emac_register_types(void)
+{
+    type_register_static(&at91_emac_info);
+}
+
+type_init(at91_emac_register_types)
