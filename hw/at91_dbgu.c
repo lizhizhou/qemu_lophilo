@@ -369,6 +369,7 @@ static const VMStateDescription vmstate_at91_dbgu = {
         VMSTATE_END_OF_LIST()
     }
 };
+
 static Property at91_dbgu_properties[] = {
     DEFINE_PROP_CHR("chardev", DBGUState, chr),
     DEFINE_PROP_UINT32("chipid", DBGUState, chipid, DEFAULT_CHIPID),

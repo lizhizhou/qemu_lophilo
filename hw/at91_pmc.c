@@ -71,6 +71,7 @@ int at91_master_clock_frequency = SO_FREQ;
 
 typedef struct PMCState {
     SysBusDevice busdev;
+    MemoryRegion pmc_regs_region;
     qemu_irq parent_irq;
     uint32_t scsr;
     uint32_t pcsr;
@@ -134,7 +135,7 @@ static void at91_update_master_clock(PMCState *s)
     }
 }
 
-static uint32_t at91_pmc_mem_read(void *opaque, target_phys_addr_t offset)
+static uint64_t at91_pmc_mem_read(void *opaque, target_phys_addr_t offset, unsigned size)
 {
     PMCState *s = opaque;
     DPRINTF("read %X\n", offset);
@@ -169,7 +170,7 @@ static uint32_t at91_pmc_mem_read(void *opaque, target_phys_addr_t offset)
 }
 
 static void at91_pmc_mem_write(void *opaque, target_phys_addr_t offset,
-                uint32_t value)
+                uint64_t value, unsigned size)
 {
     PMCState *s = opaque;
     DPRINTF("set %X to %X\n", offset, value);
@@ -227,66 +228,24 @@ static void at91_pmc_mem_write(void *opaque, target_phys_addr_t offset,
     at91_pmc_update_irq(s);
 }
 
-static CPUReadMemoryFunc *at91_pmc_readfn[] = {
-    at91_pmc_mem_read,
-    at91_pmc_mem_read,
-    at91_pmc_mem_read,
+
+static const MemoryRegionOps at91_pmc_mmio_ops = {
+    .read = at91_pmc_mem_read,
+    .write = at91_pmc_mem_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
-static CPUWriteMemoryFunc *at91_pmc_writefn[] = {
-    at91_pmc_mem_write,
-    at91_pmc_mem_write,
-    at91_pmc_mem_write,
-};
 
-static void at91_pmc_save(QEMUFile *f, void *opaque)
+static int at91_pmc_post_load(void *opaque, int version_id)
 {
     PMCState *s = opaque;
-    int i;
-
-    qemu_put_be32(f, s->scsr);
-    qemu_put_be32(f, s->pcsr);
-    qemu_put_be32(f, s->mor);
-    qemu_put_be32(f, s->plla);
-    qemu_put_be32(f, s->pllb);
-    qemu_put_be32(f, s->mckr);
-    for (i = 0; i < 4; i++) {
-        qemu_put_be32(f, s->pckr[i]);
-    }
-    qemu_put_be32(f, s->sr);
-    qemu_put_be32(f, s->imr);
-    qemu_put_be32(f, s->mo_freq);
-}
-
-static int at91_pmc_load(QEMUFile *f, void *opaque, int version_id)
-{
-    PMCState *s = opaque;
-    int i;
-
-    if (version_id != 1)
-        return -EINVAL;
-
-    s->scsr = qemu_get_be32(f);
-    s->pcsr = qemu_get_be32(f);
-    s->mor = qemu_get_be32(f);
-    s->plla = qemu_get_be32(f);
-    s->pllb = qemu_get_be32(f);
-    s->mckr = qemu_get_be32(f);
-    for (i = 0; i < 4; i++) {
-        s->pckr[i] = qemu_get_be32(f);
-    }
-    s->sr = qemu_get_be32(f);
-    s->imr = qemu_get_be32(f);
-    s->mo_freq = qemu_get_be32(f);
-
     at91_update_master_clock(s);
-
     return 0;
 }
 
-static void at91_pmc_reset(void *opaque)
+static void at91_pmc_reset(DeviceState *d)
 {
-    PMCState *s = opaque;
+    PMCState *s = container_of(d, PMCState, busdev.qdev);;
 
     s->scsr = 1;
     s->pcsr = 0;
@@ -299,40 +258,66 @@ static void at91_pmc_reset(void *opaque)
     s->mck_freq = SO_FREQ;
 }
 
-static void at91_pmc_init(SysBusDevice *dev)
+static int at91_pmc_init(SysBusDevice *dev)
 {
     PMCState *s = FROM_SYSBUS(typeof (*s), dev);
-    int pmc_regs;
 
     sysbus_init_irq(dev, &s->parent_irq);
 
-    pmc_regs = cpu_register_io_memory(at91_pmc_readfn, at91_pmc_writefn, s);
-    sysbus_init_mmio(dev, PMC_SIZE, pmc_regs);
+    memory_region_init_io(&s->pmc_regs_region, &at91_pmc_mmio_ops, s,
+                          "at91,pmc", PMC_SIZE);
+    sysbus_init_mmio(dev, &s->pmc_regs_region);
 
-    at91_pmc_reset(s);
-    qemu_register_reset(at91_pmc_reset, s);
-
-    register_savevm("at91_pmc", -1, 1, at91_pmc_save, at91_pmc_load, s);
+    return 0;
 }
 
-static SysBusDeviceInfo pmc_info = {
-    .init = at91_pmc_init,
-    .qdev.name = "at91,pmc",
-    .qdev.size = sizeof(PMCState),
-    .qdev.props = (Property[]) {
-        {
-            .name   = "mo_freq",
-            .info   = &qdev_prop_uint32,
-            .offset = offsetof(PMCState, mo_freq),
-            .defval = (uint32_t[]) { 0 },
-        },
-       {/* end of list */}
+static const VMStateDescription vmstate_at91_pmc = {
+    .name = "at91,pmc",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .post_load = at91_pmc_post_load,
+    .fields      = (VMStateField[]) {
+        VMSTATE_UINT32(scsr, PMCState),
+        VMSTATE_UINT32(pcsr, PMCState),
+        VMSTATE_UINT32(mor, PMCState),
+        VMSTATE_UINT32(plla, PMCState),
+        VMSTATE_UINT32(pllb, PMCState),
+        VMSTATE_UINT32(mckr, PMCState),
+        VMSTATE_UINT32_ARRAY(pckr, PMCState, 4),
+        VMSTATE_UINT32(sr, PMCState),
+        VMSTATE_UINT32(imr, PMCState),
+        VMSTATE_UINT32(mo_freq, PMCState),
+        VMSTATE_END_OF_LIST()
     }
 };
 
-static void at91_pmc_register(void)
+static Property at91_pmc_properties[] = {
+    DEFINE_PROP_UINT32("mo_freq", PMCState, mo_freq, 0),
+    DEFINE_PROP_END_OF_LIST(),
+};
+
+static void at91_pmc_class_init(ObjectClass *klass, void *data)
 {
-    sysbus_register_withprop(&pmc_info);
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = at91_pmc_init;
+    dc->reset = at91_pmc_reset;
+    dc->props = at91_pmc_properties;
+    dc->vmsd = &vmstate_at91_pmc;
 }
 
-device_init(at91_pmc_register)
+static TypeInfo at91_pmc_info = {
+    .name = "at91,pmc",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(PMCState),
+    .class_init = at91_pmc_class_init,
+};
+
+static void at91_pmc_register_types(void)
+{
+    type_register_static(&at91_pmc_info);
+}
+
+type_init(at91_pmc_register_types)

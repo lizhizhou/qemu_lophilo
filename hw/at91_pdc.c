@@ -54,7 +54,7 @@ PDCState *at91_pdc_init(void *opaque, pdc_start_transfer_t start_transfer,
 {
     PDCState *s;
 
-    s = qemu_mallocz(sizeof(PDCState));
+    s = g_malloc(sizeof(PDCState));
     s->opaque = opaque;
     s->start_transfer = start_transfer;
     s->state_changed = state_changed;
