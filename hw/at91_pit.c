@@ -23,7 +23,7 @@
  */
 
 #include "sysbus.h"
-#include "qemu-timer.h"
+#include "ptimer.h"
 #include "at91.h"
 
 #define PIT_SIZE        0x10
@@ -38,6 +38,7 @@
 
 typedef struct PITState {
     SysBusDevice busdev;
+    MemoryRegion pit_regs_region;
     qemu_irq irq;
     ptimer_state *timer;
     uint32_t mr;
@@ -56,7 +57,7 @@ static void at91_pit_tick(void *opaque)
     }
 }
 
-static uint32_t at91_pit_mem_read(void *opaque, target_phys_addr_t offset)
+static uint64_t at91_pit_mem_read(void *opaque, target_phys_addr_t offset, unsigned size)
 {
     PITState *s = opaque;
     uint32_t picnt = s->picnt;
@@ -83,7 +84,7 @@ static uint32_t at91_pit_mem_read(void *opaque, target_phys_addr_t offset)
 }
 
 static void at91_pit_mem_write(void *opaque, target_phys_addr_t offset,
-                uint32_t value)
+                uint64_t value, unsigned size)
 {
     PITState *s = opaque;
 
@@ -106,46 +107,15 @@ static void at91_pit_mem_write(void *opaque, target_phys_addr_t offset,
     }
 }
 
-static CPUReadMemoryFunc *at91_pit_readfn[] = {
-    at91_pit_mem_read,
-    at91_pit_mem_read,
-    at91_pit_mem_read,
+static const MemoryRegionOps at91_pit_mmio_ops = {
+    .read = at91_pit_mem_read,
+    .write = at91_pit_mem_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
-static CPUWriteMemoryFunc *at91_pit_writefn[] = {
-    at91_pit_mem_write,
-    at91_pit_mem_write,
-    at91_pit_mem_write,
-};
-
-static void at91_pit_save(QEMUFile *f, void *opaque)
+static void at91_pit_reset(DeviceState *d)
 {
-    PITState *s = opaque;
-
-    qemu_put_be32(f, s->mr);
-    qemu_put_be32(f, s->sr);
-    qemu_put_be32(f, s->picnt);
-    qemu_put_ptimer(f, s->timer);
-}
-
-static int at91_pit_load(QEMUFile *f, void *opaque, int version_id)
-{
-    PITState *s = opaque;
-
-    if (version_id != 1)
-        return -EINVAL;
-
-    s->mr = qemu_get_be32(f);
-    s->sr = qemu_get_be32(f);
-    s->picnt = qemu_get_be32(f);
-    qemu_get_ptimer(f, s->timer);
-
-    return 0;
-}
-
-static void at91_pit_reset(void *opaque)
-{
-    PITState *s = opaque;
+    PITState *s = container_of(d, PITState, busdev.qdev);
 
     s->mr = 0xfffff;
     s->sr = 0;
@@ -153,28 +123,57 @@ static void at91_pit_reset(void *opaque)
     ptimer_stop(s->timer);
 }
 
-static void at91_pit_init(SysBusDevice *dev)
+static int at91_pit_init(SysBusDevice *dev)
 {
     PITState *s = FROM_SYSBUS(typeof (*s), dev);
     QEMUBH *pit_bh;
-    int pit_regs;
 
     pit_bh = qemu_bh_new(at91_pit_tick, s);
     s->timer = ptimer_init(pit_bh);
 
     sysbus_init_irq(dev, &s->irq);
-    pit_regs = cpu_register_io_memory(at91_pit_readfn, at91_pit_writefn, s);
-    sysbus_init_mmio(dev, PIT_SIZE, pit_regs);
 
-    at91_pit_reset(s);
-    qemu_register_reset(at91_pit_reset, s);
+    memory_region_init_io(&s->pit_regs_region, &at91_pit_mmio_ops, s,
+                          "at91,pmc", PIT_SIZE);
+    sysbus_init_mmio(dev, &s->pit_regs_region);
 
-    register_savevm("at91_pit", -1, 1, at91_pit_save, at91_pit_load, s);
+    return 0;
 }
 
-static void at91_pit_register(void)
+static const VMStateDescription vmstate_at91_pit = {
+    .name = "at91,pit",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField[]) {
+        VMSTATE_UINT32(mr, PITState),
+        VMSTATE_UINT32(sr, PITState),
+        VMSTATE_UINT32(picnt, PITState),
+        VMSTATE_PTIMER(timer, PITState),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static void at91_pit_class_init(ObjectClass *klass, void *data)
 {
-    sysbus_register_dev("at91,pit", sizeof(PITState), at91_pit_init);
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = at91_pit_init;
+    dc->reset = at91_pit_reset;
+    dc->vmsd = &vmstate_at91_pit;
 }
 
-device_init(at91_pit_register)
+static TypeInfo at91_pit_info = {
+    .name = "at91,pit",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(PITState),
+    .class_init = at91_pit_class_init,
+};
+
+static void at91_pit_register_types(void)
+{
+    type_register_static(&at91_pit_info);
+}
+
+type_init(at91_pit_register_types)
