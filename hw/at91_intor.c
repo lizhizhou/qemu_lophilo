@@ -42,46 +42,54 @@ static void at91_intor_set_irq(void *opaque, int irq, int level)
     qemu_set_irq(s->parent_irq, !!s->sources);
 }
 
-static void at91_intor_save(QEMUFile *f, void *opaque)
+static void at91_intor_reset(DeviceState *d)
 {
-    IntOrState *s = opaque;
-
-    qemu_put_be32(f, s->sources);
-}
-
-static int at91_intor_load(QEMUFile *f, void *opaque, int version_id)
-{
-    IntOrState *s = opaque;
-
-    if (version_id != 1)
-        return -EINVAL;
-
-    s->sources = qemu_get_be32(f);
-    return 0;
-}
-
-static void at91_intor_reset(void *opaque)
-{
-    IntOrState *s = opaque;
+    IntOrState *s = container_of(d, IntOrState, busdev.qdev);
     
     s->sources = 0;
 }
 
-static void at91_intor_init(SysBusDevice *dev)
+static int at91_intor_init(SysBusDevice *dev)
 {
     IntOrState *s = FROM_SYSBUS(typeof (*s), dev);
 
     qdev_init_gpio_in(&dev->qdev, at91_intor_set_irq, 32);
     sysbus_init_irq(dev, &s->parent_irq);
 
-    qemu_register_reset(at91_intor_reset, s);
-
-    register_savevm("at91_intor", -1, 1, at91_intor_save, at91_intor_load, s);
+    return 0;
 }
 
-static void at91_intor_register(void)
+static const VMStateDescription vmstate_at91_intor = {
+    .name = "at91,intor",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField[]) {
+        VMSTATE_UINT32(sources, IntOrState),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static void at91_intor_class_init(ObjectClass *klass, void *data)
 {
-    sysbus_register_dev("at91,intor", sizeof(IntOrState), at91_intor_init);
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = at91_intor_init;
+    dc->reset = at91_intor_reset;
+    dc->vmsd = &vmstate_at91_intor;
 }
 
-device_init(at91_intor_register)
+static TypeInfo at91_intor_info = {
+    .name          = "at91,intor",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(IntOrState),
+    .class_init    = at91_intor_class_init,
+};
+
+static void at91_intor_register_types(void)
+{
+    type_register_static(&at91_intor_info);
+}
+
+type_init(at91_intor_register_types)
