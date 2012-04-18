@@ -1,12 +1,15 @@
 export LOPHILO_TARGET_ARCH=i686
-include ../Makefile.common
+include ../../Makefile.common
 
 .PHONY: qemu-arm clean install clear-cache
 
 VERSION:=$(shell cat VERSION)
-DEB_PREFIX:=$(shell realpath `pwd`/debian/usr)
 DEBPKG_NAME:=lophilo-qemu_${VERSION}_i386.deb
-
+# building out of dir does not work...
+#OUTPUT_DIR=../obj/qemu
+OUTPUT_DIR=.
+SRC_DIR=`pwd`
+DEB_PREFIX:=$(shell realpath ${OUTPUT_DIR}/debian/usr)
 all:
 	@echo "DEB_PREFIX: ${DEB_PREFIX}"
 	@echo "DEBPKG_NAME: ${DEBPKG_NAME}"
@@ -15,11 +18,12 @@ all:
 	which cc
 	
 config:
-	mkdir -p ./debian/usr
-	./configure --target-list=arm-softmmu,arm-linux-user --prefix=${DEB_PREFIX} --cross-prefix=${TOOLCHAIN_PATH}/ --enable-debug 
+	mkdir -p ${OUTPUT_DIR}
+	mkdir -p ${OUTPUT_DIR}/debian/usr
+	cd ${OUTPUT_DIR}; ${SRC_DIR}/configure --target-list=arm-softmmu,arm-linux-user --prefix=${DEB_PREFIX} --cross-prefix=${TOOLCHAIN_PATH}/ --enable-debug --disable-werror
 
 build:
-	time make -j8
+	time -f "%E real,%U user,%S sys" make -j8 -C ${OUTPUT_DIR}
 
 install:
 	mkdir -p ${DEB_PREFIX}/bin
