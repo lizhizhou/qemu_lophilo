@@ -23,6 +23,7 @@
  */
 
 #include "sysbus.h"
+#include "ptimer.h"
 #include "qemu-timer.h"
 #include "at91.h"
 
@@ -76,6 +77,7 @@ typedef struct TCChannelState {
 
 typedef struct TCState {
     SysBusDevice busdev;
+    MemoryRegion tc_regs_region;
     TCChannelState channels[3];
 } TCState;
 
@@ -213,7 +215,8 @@ static void at91_tc_channel_write(TCChannelState *s,
     }
 }
 
-static uint32_t at91_tc_mem_read(void *opaque, target_phys_addr_t offset)
+static uint64_t at91_tc_mem_read(void *opaque, target_phys_addr_t offset, 
+        unsigned size)
 {
     TCState *s = opaque;
 
@@ -236,7 +239,7 @@ static uint32_t at91_tc_mem_read(void *opaque, target_phys_addr_t offset)
 }
 
 static void at91_tc_mem_write(void *opaque, target_phys_addr_t offset,
-                uint32_t value)
+                uint64_t value, unsigned size)
 {
     TCState *s = opaque;
 
@@ -261,60 +264,15 @@ static void at91_tc_mem_write(void *opaque, target_phys_addr_t offset,
     }
 }
 
-static CPUReadMemoryFunc *at91_tc_readfn[] = {
-    at91_tc_mem_read,
-    at91_tc_mem_read,
-    at91_tc_mem_read,
+static const MemoryRegionOps at91_tc_mmio_ops = {
+    .read = at91_tc_mem_read,
+    .write = at91_tc_mem_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
-static CPUWriteMemoryFunc *at91_tc_writefn[] = {
-    at91_tc_mem_write,
-    at91_tc_mem_write,
-    at91_tc_mem_write,
-};
-
-static void at91_tc_save(QEMUFile *f, void *opaque)
+static void at91_tc_reset(DeviceState *d)
 {
-    TCState *s = opaque;
-    int channel;
-
-    for (channel = 0; channel < 3; channel++) {
-        qemu_put_ptimer(f, s->channels[channel].timer);
-        qemu_put_be32(f, s->channels[channel].mr);
-        qemu_put_be16(f, s->channels[channel].cv);
-        qemu_put_be16(f, s->channels[channel].ra);
-        qemu_put_be16(f, s->channels[channel].rb);
-        qemu_put_be16(f, s->channels[channel].rc);
-        qemu_put_be32(f, s->channels[channel].sr);
-        qemu_put_be32(f, s->channels[channel].imr);
-    }
-}
-
-static int at91_tc_load(QEMUFile *f, void *opaque, int version_id)
-{
-    TCState *s = opaque;
-    int channel;
-
-    if (version_id != 1)
-        return -EINVAL;
-
-    for (channel = 0; channel < 3; channel++) {
-        qemu_get_ptimer(f, s->channels[channel].timer);
-        s->channels[channel].mr = qemu_get_be32(f);
-        s->channels[channel].cv = qemu_get_be16(f);
-        s->channels[channel].ra = qemu_get_be16(f);
-        s->channels[channel].rb = qemu_get_be16(f);
-        s->channels[channel].rc = qemu_get_be16(f);
-        s->channels[channel].sr = qemu_get_be32(f);
-        s->channels[channel].imr = qemu_get_be32(f);
-    }
-
-    return 0;
-}
-
-static void at91_tc_reset(void *opaque)
-{
-    TCState *s = opaque;
+    TCState *s = container_of(d, TCState, busdev.qdev);
     int channel;
 
     for (channel = 0; channel < 3; channel++) {
@@ -329,11 +287,10 @@ static void at91_tc_reset(void *opaque)
     }
 }
 
-static void at91_tc_init(SysBusDevice *dev)
+static int at91_tc_init(SysBusDevice *dev)
 {
     TCState *s = FROM_SYSBUS(typeof (*s), dev);
     QEMUBH *bh;
-    int tc_regs;
     int channel;
 
     for (channel = 0; channel < 3; channel++) {
@@ -343,18 +300,63 @@ static void at91_tc_init(SysBusDevice *dev)
         sysbus_init_irq(dev, &s->channels[channel].irq);
     }
 
-    tc_regs = cpu_register_io_memory(at91_tc_readfn,
-                  at91_tc_writefn, s);
-    sysbus_init_mmio(dev, TC_SIZE, tc_regs);
+    memory_region_init_io(&s->tc_regs_region, &at91_tc_mmio_ops, s,
+            "at91,tc", TC_SIZE);
+    sysbus_init_mmio(dev, &s->tc_regs_region);
 
-    qemu_register_reset(at91_tc_reset, s);
-
-    register_savevm("at91_tc", -1, 1, at91_tc_save, at91_tc_load, s);
+    return 0;
 }
 
-static void at91_tc_register(void)
+static const VMStateDescription vmstate_at91_tc_channel = {
+    .name = "at91,tc,channel",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields = (VMStateField[]) {
+        VMSTATE_PTIMER(timer, TCChannelState),
+        VMSTATE_UINT32(mr, TCChannelState),
+        VMSTATE_UINT16(cv, TCChannelState),
+        VMSTATE_UINT16(ra, TCChannelState),
+        VMSTATE_UINT16(rb, TCChannelState),
+        VMSTATE_UINT16(rc, TCChannelState),
+        VMSTATE_UINT32(sr, TCChannelState),
+        VMSTATE_UINT32(imr, TCChannelState),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static const VMStateDescription vmstate_at91_tc = {
+    .name = "at91,tc",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields = (VMStateField[]) {
+        VMSTATE_STRUCT_ARRAY(channels, TCState, 3, 0,
+                vmstate_at91_tc_channel, TCChannelState),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static void at91_tc_class_init(ObjectClass *klass, void *data)
 {
-    sysbus_register_dev("at91,tc", sizeof(TCState), at91_tc_init);
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = at91_tc_init;
+    dc->reset = at91_tc_reset;
+    dc->vmsd = &vmstate_at91_tc;
 }
 
-device_init(at91_tc_register)
+static TypeInfo at91_tc_info = {
+    .name  = "at91,tc",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size  = sizeof(TCState),
+    .class_init    = at91_tc_class_init,
+};
+
+static void at91_tc_register_types(void)
+{
+    type_register_static(&at91_tc_info);
+}
+
+type_init(at91_tc_register_types)

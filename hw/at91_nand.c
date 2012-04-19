@@ -5,7 +5,7 @@
 #include "at91.h"
 
 typedef struct NandState {
-    NANDFlashState *nand_state;
+    struct NANDFlashState *nand_state;
 } NandState;
 
 //#define AT91_NAND_DEBUG
@@ -20,7 +20,8 @@ typedef struct NandState {
 
 extern CPUState *g_env;
 
-static uint32_t at91_nand_mem_read(void *opaque, target_phys_addr_t offset)
+static uint64_t at91_nand_mem_read(void *opaque, target_phys_addr_t offset,
+    unsigned size)
 {
     NandState *s = opaque;
 
@@ -30,7 +31,7 @@ static uint32_t at91_nand_mem_read(void *opaque, target_phys_addr_t offset)
 }
 
 static void at91_nand_mem_write(void *opaque, target_phys_addr_t offset,
-                uint32_t value)
+                uint64_t value, unsigned size)
 {
     NandState *s = opaque;        
 
@@ -39,16 +40,10 @@ static void at91_nand_mem_write(void *opaque, target_phys_addr_t offset,
     nand_setio(s->nand_state, value & 0xFF);
 }
 
-static CPUReadMemoryFunc *at91_nand_readfn[] = {
-    at91_nand_mem_read,
-    at91_nand_mem_read,
-    at91_nand_mem_read,
-};
-
-static CPUWriteMemoryFunc *at91_nand_writefn[] = {
-    at91_nand_mem_write,
-    at91_nand_mem_write,
-    at91_nand_mem_write,
+static const MemoryRegionOps at91_nand_mmio_ops = {
+    .read = at91_nand_mem_read,
+    .write = at91_nand_mem_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
 void at91_nand_register(NANDFlashState *st)
@@ -58,8 +53,10 @@ void at91_nand_register(NANDFlashState *st)
 
     s = qemu_mallocz(sizeof(*s));
     s->nand_state = st;
-    iomemtype = cpu_register_io_memory(at91_nand_readfn, at91_nand_writefn, s);
-    cpu_register_physical_memory(0x40000000, 0x10000000, iomemtype);
+    memory_region_init_io(&s->nand_regs_region, &at91_nand_mmio_ops, s, 
+            "at91,nand", NAND_SIZE);
+
+    //cpu_register_physical_memory(0x40000000, 0x10000000, iomemtype);
 }
 
 
