@@ -23,6 +23,7 @@
  */
 
 #include "sysbus.h"
+#include "ptimer.h"
 #include "qemu-timer.h"
 
 #define RTT_SIZE        0x10
@@ -41,6 +42,7 @@
 
 typedef struct RTTState {
     SysBusDevice busdev;
+    MemoryRegion rtt_regs_region;
     qemu_irq irq;
     ptimer_state *timer;
     uint32_t mr;
@@ -64,7 +66,8 @@ static void at91_rtt_tick(void *opaque)
     }
 }
 
-static uint32_t at91_rtt_mem_read(void *opaque, target_phys_addr_t offset)
+static uint64_t at91_rtt_mem_read(void *opaque, target_phys_addr_t offset, 
+      unsigned size)
 {
     RTTState *s = opaque;
     uint32_t sr;
@@ -88,7 +91,7 @@ static uint32_t at91_rtt_mem_read(void *opaque, target_phys_addr_t offset)
 }
 
 static void at91_rtt_mem_write(void *opaque, target_phys_addr_t offset,
-                uint32_t value)
+                uint64_t value, unsigned size)
 {
     RTTState *s = opaque;
 
@@ -111,48 +114,15 @@ static void at91_rtt_mem_write(void *opaque, target_phys_addr_t offset,
     }
 }
 
-static CPUReadMemoryFunc *at91_rtt_readfn[] = {
-    at91_rtt_mem_read,
-    at91_rtt_mem_read,
-    at91_rtt_mem_read,
+static const MemoryRegionOps at91_rtt_mmio_ops = {
+    .read = at91_rtt_mem_read,
+    .write = at91_rtt_mem_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
-static CPUWriteMemoryFunc *at91_rtt_writefn[] = {
-    at91_rtt_mem_write,
-    at91_rtt_mem_write,
-    at91_rtt_mem_write,
-};
-
-static void at91_rtt_save(QEMUFile *f, void *opaque)
+static void at91_rtt_reset(DeviceState *d)
 {
-    RTTState *s = opaque;
-
-    qemu_put_be32(f, s->mr);
-    qemu_put_be32(f, s->ar);
-    qemu_put_be32(f, s->vr);
-    qemu_put_be32(f, s->sr);
-    qemu_put_ptimer(f, s->timer);
-}
-
-static int at91_rtt_load(QEMUFile *f, void *opaque, int version_id)
-{
-    RTTState *s = opaque;
-
-    if (version_id != 1)
-        return -EINVAL;
-
-    s->mr = qemu_get_be32(f);
-    s->ar = qemu_get_be32(f);
-    s->vr = qemu_get_be32(f);
-    s->sr = qemu_get_be32(f);
-    qemu_get_ptimer(f, s->timer);
-
-    return 0;
-}
-
-static void at91_rtt_reset(void *opaque)
-{
-    RTTState *s = opaque;
+    RTTState *s = container_of(d, RTTState, busdev.qdev);
 
     s->mr = 0x8000;
     s->ar = ~0;
@@ -160,13 +130,10 @@ static void at91_rtt_reset(void *opaque)
     s->sr = 0;
 }
 
-static void at91_rtt_init(SysBusDevice *dev)
+static int at91_rtt_init(SysBusDevice *dev)
 {
     RTTState *s = FROM_SYSBUS(typeof (*s), dev);
     QEMUBH *bh;
-    int rtt_regs;
-
-    at91_rtt_reset(s);
 
     bh = qemu_bh_new(at91_rtt_tick, s);
     s->timer = ptimer_init(bh);
@@ -176,17 +143,48 @@ static void at91_rtt_init(SysBusDevice *dev)
 
     sysbus_init_irq(dev, &s->irq);
 
-    rtt_regs = cpu_register_io_memory(at91_rtt_readfn, at91_rtt_writefn, s);
-    sysbus_init_mmio(dev, RTT_SIZE, rtt_regs);
+    memory_region_init_io(&s->rtt_regs_region, &at91_rtt_mmio_ops, s, 
+            "at91,rtt", RTT_SIZE);
+    sysbus_init_mmio(dev, &s->rtt_regs_region);
 
-    qemu_register_reset(at91_rtt_reset, s);
-
-    register_savevm("at91_rtt", -1, 1, at91_rtt_save, at91_rtt_load, s);
+    return 0;
 }
 
-static void at91_rtt_register(void)
+static const VMStateDescription vmstate_at91_rtt = {
+    .name = "at91,rtt",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField[]) {
+        VMSTATE_UINT32(mr, RTTState),
+        VMSTATE_UINT32(ar, RTTState),
+        VMSTATE_UINT32(vr, RTTState),
+        VMSTATE_UINT32(sr, RTTState),
+        VMSTATE_PTIMER(timer, RTTState),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static void at91_rtt_class_init(ObjectClass *klass, void *data)
 {
-    sysbus_register_dev("at91,rtt", sizeof(RTTState), at91_rtt_init);
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = at91_rtt_init;
+    dc->reset = at91_rtt_reset;
+    dc->vmsd = &vmstate_at91_rtt;
 }
 
-device_init(at91_rtt_register)
+static TypeInfo at91_rtt_info = {
+    .name  = "at91,rtt",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size  = sizeof(RTTState),
+    .class_init    = at91_rtt_class_init,
+};
+
+static void at91_rtt_register_types(void)
+{
+    type_register_static(&at91_rtt_info);
+}
+
+type_init(at91_rtt_register_types)
