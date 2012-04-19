@@ -27,6 +27,7 @@
 #include "arm-misc.h"
 #include "sysemu.h"
 #include "net.h"
+#include "flash.h"
 #include "block.h"
 
 #define NOR_FLASH_ADDR 0x100000
@@ -38,7 +39,7 @@ static void at91pes_init(ram_addr_t ram_size,
                       const char *initrd_filename, const char *cpu_model)
 {
     struct arm_boot_info at91pes_binfo;
-    CPUState *env;
+    CPUARMState *env;
     qemu_irq *cpu_pic;
     qemu_irq pic[32];
     qemu_irq pic1[32];
