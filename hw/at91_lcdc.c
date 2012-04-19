@@ -23,6 +23,7 @@
 
 typedef struct LCDCState {
     SysBusDevice busdev;
+    MemoryRegion lcdc_regs_region;
     qemu_irq irq;
     DisplayState *ds;
     uint32_t dmacon;
@@ -46,7 +47,8 @@ typedef struct LCDCState {
 #endif
 
 
-static uint32_t at91_lcdc_mem_read(void *opaque, target_phys_addr_t offset)
+static uint64_t at91_lcdc_mem_read(void *opaque, target_phys_addr_t offset,
+        unsigned size)
 {
     LCDCState *s = opaque;
 
@@ -72,7 +74,7 @@ static uint32_t at91_lcdc_mem_read(void *opaque, target_phys_addr_t offset)
 }
 
 static void at91_lcdc_mem_write(void *opaque, target_phys_addr_t offset,
-                uint32_t value)
+                uint64_t value, unsigned size)
 {
     LCDCState *s = opaque;
     offset &= LCDC_SIZE - 1;
@@ -114,21 +116,9 @@ static void at91_lcdc_mem_write(void *opaque, target_phys_addr_t offset,
     }
 }
 
-static CPUReadMemoryFunc *at91_lcdc_readfn[] = {
-    at91_lcdc_mem_read,
-    at91_lcdc_mem_read,
-    at91_lcdc_mem_read,
-};
-
-static CPUWriteMemoryFunc *at91_lcdc_writefn[] = {
-    at91_lcdc_mem_write,
-    at91_lcdc_mem_write,
-    at91_lcdc_mem_write,
-};
-
-static void at91_lcdc_reset(void *opaque)
+static void at91_lcdc_reset(DeviceState *d)
 {
-    LCDCState *s = opaque;
+    LCDCState *s = container_of(d, LCDCState, busdev.qdev);
     s->pwrcon = 0x0000000e;
     s->dmacon = 0;
     s->dmafrmcfg = 0;
@@ -253,22 +243,45 @@ static void at91_lcdc_update_display(void *opaque)
     dpy_update(s->ds, 0, 0, width + 2, height + 2);
 }
 
-static void at91_lcdc_init(SysBusDevice *dev)
+static const MemoryRegionOps at91_lcdc_mmio_ops = {
+    .read = at91_lcdc_mem_read,
+    .write = at91_lcdc_mem_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+};
+
+static int at91_lcdc_init(SysBusDevice *dev)
 {
     LCDCState *s = FROM_SYSBUS(typeof(*s), dev);
-    int lcdc_regs;
 
     sysbus_init_irq(dev, &s->irq);
-    lcdc_regs = cpu_register_io_memory(at91_lcdc_readfn,
-                                      at91_lcdc_writefn, s);
-    sysbus_init_mmio(dev, LCDC_SIZE, lcdc_regs);    
-    qemu_register_reset(at91_lcdc_reset, s);
+    memory_region_init_io(&s->lcdc_regs_region, &at91_lcdc_mmio_ops, s,
+            "at91,lcdc", LCDC_SIZE);
+    sysbus_init_mmio(dev, &s->lcdc_regs_region);    
+
     s->ds = graphic_console_init(at91_lcdc_update_display, NULL, NULL, NULL, s);
+
+    return 0;
 }
 
-static void at91_lcdc_register(void)
+static void at91_lcdc_class_init(ObjectClass *klass, void *data)
 {
-    sysbus_register_dev("at91,lcdc", sizeof(LCDCState), at91_lcdc_init);
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = at91_lcdc_init;
+    dc->reset = at91_lcdc_reset;
 }
 
-device_init(at91_lcdc_register)
+static TypeInfo at91_lcdc_info = {
+    .name  = "at91,lcdc",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size  = sizeof(LCDCState),
+    .class_init    = at91_lcdc_class_init,
+};
+
+static void at91_lcdc_register_types(void)
+{
+    type_register_static(&at91_lcdc_info);
+}
+
+type_init(at91_lcdc_register_types)
