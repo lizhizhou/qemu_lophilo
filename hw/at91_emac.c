@@ -28,8 +28,12 @@
  * sending, ...
  */
 
+#include "hw.h"
 #include "sysbus.h"
+#include "trace.h"
 #include "net.h"
+#include "qemu-error.h"
+#include "qdev-addr.h"
 
 /* #define DEBUG_EMAC */
 
@@ -126,8 +130,9 @@ typedef struct EMACState
 {
     SysBusDevice busdev;
     MemoryRegion emac_regs_region;
+    NICConf conf;
+    NICState *nic;
     qemu_irq irq;
-    VLANClientState *vc;
 
     uint32_t ctl;
     uint32_t cfg;
@@ -188,15 +193,15 @@ static uint32_t address_match(EMACState *s, const uint8_t *buf)
     return 0;
 }
 
-static int at91_emac_can_receive(VLANClientState *vc)
+static int at91_emac_can_receive(VLANClientState *nc)
 {
-    EMACState *s = vc->opaque;
+    EMACState *s = DO_UPCAST(NICState, nc, nc)->opaque;
     return !!(s->ctl & CTL_RE);
 }
 
-static ssize_t at91_emac_receive(VLANClientState *vc, const uint8_t *buf, size_t size)
+static ssize_t at91_emac_receive(VLANClientState *nc, const uint8_t *buf, size_t size)
 {
-    EMACState *s = vc->opaque;
+    EMACState *s = DO_UPCAST(NICState, nc, nc)->opaque;
     uint32_t rx_desc;
     uint32_t buffer_addr;
     uint32_t status_len;
@@ -304,9 +309,9 @@ static void at91_emac_send(EMACState *s)
     }
 
     if (s->ctl & CTL_LLB) {
-        at91_emac_receive(s->vc, buf, size);
+        at91_emac_receive(&s->nic->nc, buf, size);
     } else {
-        qemu_send_packet(s->vc, buf, size);
+        qemu_send_packet(&s->nic->nc, buf, size);
     }
 
     /* Transfer Complete */
@@ -357,9 +362,9 @@ static void at91_emac_send_queue(EMACState *s)
             }
 
             if (s->ctl & CTL_LLB) {
-                at91_emac_receive(s->vc, buf, frame_size);
+                at91_emac_receive(&s->nic->nc, buf, frame_size);
             } else {
-                qemu_send_packet(s->vc, buf, frame_size);
+                qemu_send_packet(&s->nic->nc, buf, frame_size);
             }
 
             /* Set owner bit to CPU */
@@ -407,7 +412,7 @@ static void at91_emac_phy_write(EMACState *s, uint8_t reg, uint16_t value)
 {
 }
 
-static uint32_t at91_emac_mem_read(void *opaque, target_phys_addr_t offset)
+static uint64_t at91_emac_mem_read(void *opaque, target_phys_addr_t offset, unsigned size)
 {
     EMACState *s = opaque;
     uint32_t isr;
@@ -612,18 +617,28 @@ static void at91_emac_reset(DeviceState *d)
     s->sa_valid = 0;
 }
 
-static void at91_emac_init(SysBusDevice *dev)
+static NetClientInfo net_emac_info = {
+    .type = NET_CLIENT_TYPE_NIC,
+    .size = sizeof(NICState),
+    .can_receive = at91_emac_can_receive,
+    .receive = at91_emac_receive,
+};
+
+static int at91_emac_init(SysBusDevice *dev)
 {
     EMACState *s = FROM_SYSBUS(typeof (*s), dev);
 
-    sysbus_init_irq(dev, &s->irq);
-    s->vc = qdev_get_vlan_client(&dev->qdev,
-                                 at91_emac_can_receive,
-                                 at91_emac_receive,
-                                 NULL, NULL, s);
     memory_region_init_io(&s->emac_regs_region, &at91_emac_mmio_ops, s,
             "at91,emac", EMAC_SIZE);
     sysbus_init_mmio(dev, &s->emac_regs_region);
+
+    sysbus_init_irq(dev, &s->irq);
+    qemu_macaddr_default_if_unset(&s->conf.macaddr);
+    s->nic = qemu_new_nic(&net_emac_info, &s->conf,
+                          object_get_typename(OBJECT(dev)), dev->qdev.id, s);
+    qemu_format_nic_info_str(&s->nic->nc, s->conf.macaddr.a);
+
+    return 0;
 }
 
 static const VMStateDescription vmstate_at91_emac = {
@@ -657,12 +672,12 @@ static const VMStateDescription vmstate_at91_emac = {
         VMSTATE_UINT16(sa3h, EMACState),
         VMSTATE_UINT32(sa4l, EMACState),
         VMSTATE_UINT16(sa4h, EMACState),
-        VMSTATE_BYTE(sa_valid, EMACState),
+        VMSTATE_UINT8(sa_valid, EMACState),
         VMSTATE_END_OF_LIST()
     }
 };
 
-static int at91_emac_class_init(ObjectClass *klass, void *data)
+static void at91_emac_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
@@ -670,8 +685,6 @@ static int at91_emac_class_init(ObjectClass *klass, void *data)
     k->init = at91_emac_init;
     dc->reset = at91_emac_reset;
     dc->vmsd = &vmstate_at91_emac;
-
-    return 0;
 }
 
 static TypeInfo at91_emac_info = {

@@ -389,6 +389,10 @@ obj-arm-y += nseries.o blizzard.o onenand.o cbus.o tusb6010.o usb/hcd-musb.o
 obj-arm-y += mst_fpga.o mainstone.o
 obj-arm-y += z2.o
 obj-arm-y += musicpal.o bitbang_i2c.o marvell_88w8618_audio.o
+obj-arm-y += at91_aic.o at91_dbgu.o at91_pdc.o at91_pmc.o at91_pit.o 
+obj-arm-y += at91_intor.o at91_pio.o at91_emac.o 
+# at91_lcdc.o     at91_rtt.o  at91_spi.o
+# at91_nand.o  at91pes.o    at91_rstc.o  at91sam9.o  at91_tc.o
 obj-arm-y += lophilo.o
 obj-arm-y += framebuffer.o
 obj-arm-y += vexpress.o
@@ -396,10 +400,6 @@ obj-arm-y += strongarm.o
 obj-arm-y += collie.o
 obj-arm-y += pl041.o lm4549.o
 obj-arm-$(CONFIG_FDT) += device_tree.o
-obj-arm-y += at91_aic.o at91_dbgu.o at91_pdc.o at91_pmc.o at91_pit.o 
-obj-arm-y += at91_intor.o at91_emac.c   
-# at91_lcdc.c   at91_pio.c   at91_rtt.c  at91_spi.c
-# at91_nand.c  at91pes.c    at91_rstc.c  at91sam9.c  at91_tc.c
 
 
 obj-sh4-y = shix.o r2d.o sh7750.o sh7750_regnames.o tc58128.o

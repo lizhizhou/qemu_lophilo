@@ -68,6 +68,7 @@
 
 typedef struct PIOState {
     SysBusDevice busdev;
+    MemoryRegion pio_regs_region;
     qemu_irq out[PIO_PINS * 3];
     qemu_irq parent_irq;
     uint32_t psr;
@@ -125,7 +126,8 @@ static void at91_pio_set_pin(void *opaque, int pin, int level)
     }
 }
 
-static uint32_t at91_pio_mem_read(void *opaque, target_phys_addr_t offset)
+static uint64_t at91_pio_mem_read(void *opaque, target_phys_addr_t offset, 
+    unsigned size)
 {
     PIOState *s = opaque;
     int isr;
@@ -165,7 +167,7 @@ static uint32_t at91_pio_mem_read(void *opaque, target_phys_addr_t offset)
 }
 
 static void at91_pio_mem_write(void *opaque, target_phys_addr_t offset,
-                uint32_t value)
+                uint64_t value, unsigned size)
 {
     PIOState *s = opaque;
     int i;
@@ -243,62 +245,9 @@ static void at91_pio_mem_write(void *opaque, target_phys_addr_t offset,
     }
 }
 
-static CPUReadMemoryFunc *at91_pio_readfn[] = {
-    at91_pio_mem_read,
-    at91_pio_mem_read,
-    at91_pio_mem_read,
-};
-
-static CPUWriteMemoryFunc *at91_pio_writefn[] = {
-    at91_pio_mem_write,
-    at91_pio_mem_write,
-    at91_pio_mem_write,
-};
-
-static void at91_pio_save(QEMUFile *f, void *opaque)
+static void at91_pio_reset(DeviceState *d)
 {
-    PIOState *s = opaque;
-
-    qemu_put_be32(f, s->psr);
-    qemu_put_be32(f, s->osr);
-    qemu_put_be32(f, s->ifsr);
-    qemu_put_be32(f, s->odsr);
-    qemu_put_be32(f, s->pdsr);
-    qemu_put_be32(f, s->imr);
-    qemu_put_be32(f, s->isr);
-    qemu_put_be32(f, s->mdsr);
-    qemu_put_be32(f, s->ppusr);
-    qemu_put_be32(f, s->absr);
-    qemu_put_be32(f, s->owsr);
-    qemu_put_be32(f, s->unknown_state);
-}
-
-static int at91_pio_load(QEMUFile *f, void *opaque, int version_id)
-{
-    PIOState *s = opaque;
-
-    if (version_id != 1)
-        return -EINVAL;
-
-    s->psr = qemu_get_be32(f);
-    s->osr = qemu_get_be32(f);
-    s->ifsr = qemu_get_be32(f);
-    s->odsr = qemu_get_be32(f);
-    s->pdsr = qemu_get_be32(f);
-    s->imr = qemu_get_be32(f);
-    s->isr = qemu_get_be32(f);
-    s->mdsr = qemu_get_be32(f);
-    s->ppusr = qemu_get_be32(f);
-    s->absr = qemu_get_be32(f);
-    s->owsr = qemu_get_be32(f);
-    s->unknown_state = qemu_get_be32(f);
-
-    return 0;
-}
-
-static void at91_pio_reset(void *opaque)
-{
-    PIOState *s = opaque;
+    PIOState *s = container_of(d, PIOState, busdev.qdev);
 
     s->psr = 0xffffffff;
     s->osr = 0;
@@ -314,7 +263,13 @@ static void at91_pio_reset(void *opaque)
     s->unknown_state = 0xffffffff;
 }
 
-static void at91_pio_init(SysBusDevice *dev)
+static const MemoryRegionOps at91_pio_mmio_ops = {
+    .read = at91_pio_mem_read,
+    .write = at91_pio_mem_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+};
+
+static int at91_pio_init(SysBusDevice *dev)
 {
     PIOState *s = FROM_SYSBUS(typeof (*s), dev);
     int pio_regs;
@@ -323,18 +278,56 @@ static void at91_pio_init(SysBusDevice *dev)
     qdev_init_gpio_in(&dev->qdev, at91_pio_set_pin, PIO_PINS * 3);
     qdev_init_gpio_out(&dev->qdev, s->out, PIO_PINS * 3);
 
-    pio_regs = cpu_register_io_memory(at91_pio_readfn, at91_pio_writefn, s);
-    sysbus_init_mmio(dev, PIO_SIZE, pio_regs);
-
-    at91_pio_reset(s);
-    qemu_register_reset(at91_pio_reset, s);
-
-    register_savevm("at91_pio", -1, 1, at91_pio_save, at91_pio_load, s);
+    memory_region_init_io(&s->pio_regs_region, &at91_pio_mmio_ops, s,
+            "at91,pio", PIO_SIZE);
+    sysbus_init_mmio(dev, &s->pio_regs_region);
+    return 0;
 }
 
-static void at91_pio_register(void)
+static const VMStateDescription vmstate_at91_pio = {
+    .name = "at91,pio",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField[]) {
+        VMSTATE_UINT32(psr, PIOState),
+        VMSTATE_UINT32(osr, PIOState),
+        VMSTATE_UINT32(ifsr, PIOState),
+        VMSTATE_UINT32(odsr, PIOState),
+        VMSTATE_UINT32(pdsr, PIOState),
+        VMSTATE_UINT32(imr, PIOState),
+        VMSTATE_UINT32(isr, PIOState),
+        VMSTATE_UINT32(mdsr, PIOState),
+        VMSTATE_UINT32(ppusr, PIOState),
+        VMSTATE_UINT32(absr, PIOState),
+        VMSTATE_UINT32(owsr, PIOState),
+        VMSTATE_UINT32(unknown_state, PIOState),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static int at91_pio_class_init(ObjectClass *klass, void *data)
 {
-    sysbus_register_dev("at91,pio", sizeof(PIOState), at91_pio_init);
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = at91_pio_init;
+    dc->reset = at91_pio_reset;
+    dc->vmsd = &vmstate_at91_pio;
+
+    return 0;
 }
 
-device_init(at91_pio_register)
+static TypeInfo at91_pio_info = {
+    .name          = "at91,pio",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(PIOState),
+    .class_init    = at91_pio_class_init,
+};
+
+static void at91_pio_register_types(void)
+{
+    type_register_static(&at91_pio_info);
+}
+
+type_init(at91_pio_register_types)
