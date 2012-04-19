@@ -31,6 +31,7 @@
 
 typedef struct SPIState {
     SysBusDevice busdev;
+    MemoryRegion spi_regs_region;
     qemu_irq irq;
     uint32_t mr;
     uint32_t rdr;
@@ -69,7 +70,8 @@ static const SPIControl txrx_callback_empty = {
 
 extern CPUState *g_env;
 
-static uint32_t at91_spi_mem_read(void *opaque, target_phys_addr_t offset)
+static uint64_t at91_spi_mem_read(void *opaque, target_phys_addr_t offset, 
+                                  unsigned size)
 {
     SPIState *s = opaque;
 
@@ -98,7 +100,7 @@ static uint32_t at91_spi_mem_read(void *opaque, target_phys_addr_t offset)
 }
 
 static void at91_spi_mem_write(void *opaque, target_phys_addr_t offset,
-                               uint32_t value)
+                               uint64_t value, unsigned size)
 {
     SPIState *s = opaque;
 
@@ -133,16 +135,10 @@ static void at91_spi_mem_write(void *opaque, target_phys_addr_t offset,
     }
 }
 
-static CPUReadMemoryFunc *at91_spi_readfn[] = {
-    at91_spi_mem_read,
-    at91_spi_mem_read,
-    at91_spi_mem_read,
-};
-
-static CPUWriteMemoryFunc *at91_spi_writefn[] = {
-    at91_spi_mem_write,
-    at91_spi_mem_write,
-    at91_spi_mem_write,
+static const MemoryRegionOps at91_spi_mmio_ops = {
+    .read = at91_spi_mem_read,
+    .write = at91_spi_mem_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
 static void pdc_state_changed(void *opaque, unsigned int state)
@@ -214,9 +210,9 @@ static int pdc_start_transfer(void *opaque,
     return 0;
 }
 
-static void at91_spi_reset(void *opaque)
+static void at91_spi_reset(DeviceState *d)
 {
-    SPIState *s = opaque;
+    SPIState *s = container_of(d, SPIState, busdev.qdev);
 
     s->mr = 0;
     s->rdr = 0;
@@ -226,37 +222,47 @@ static void at91_spi_reset(void *opaque)
     at91_pdc_reset(s->pdc_state);
 }
 
-static void at91_spi_init(SysBusDevice *dev)
+static int at91_spi_init(SysBusDevice *dev)
 {
     SPIState *s = FROM_SYSBUS(typeof(*s), dev);
-    int spi_regs;
-
     s->pdc_state = at91_pdc_init(s, pdc_start_transfer, pdc_state_changed);
     sysbus_init_irq(dev, &s->irq);
-    spi_regs = cpu_register_io_memory(at91_spi_readfn, at91_spi_writefn, s);
-    sysbus_init_mmio(dev, SPI_SIZE, spi_regs);
-    qemu_register_reset(at91_spi_reset, s);
+    memory_region_init_io(&s->spi_regs_region, &at91_spi_mmio_ops, s,
+            "at91,spi", SPI_SIZE);
+    sysbus_init_mmio(dev, &s->spi_regs_region);
+
+    return 0;
 }
 
-static SysBusDeviceInfo spi_info = {
-    .init = at91_spi_init,
-    .qdev.name = "at91,spi",
-    .qdev.size = sizeof(SPIState),
-    .qdev.props = (Property[]) {
-        {
-            .name   = "spi_control",
-            .info   = &qdev_prop_ptr,
-            .offset = offsetof(SPIState, spi_control),
-            .defval = (void *)&txrx_callback_empty,
-        },
-       {/* end of list */}
-    }
+#define DEFINE_PROP_SPICTRL(_n, _s, _f)             \
+    DEFINE_PROP(_n, _s, _f, qdev_prop_chr, SPIControl*)
+
+static Property at91_spi_properties[] = {
+    DEFINE_PROP_SPICTRL("spi_control", SPIState, spi_control),
+    DEFINE_PROP_END_OF_LIST(),
 };
 
 
-static void at91_spi_register(void)
+static void at91_spi_class_init(ObjectClass *klass, void *data)
 {
-    sysbus_register_withprop(&spi_info);
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = at91_spi_init;
+    dc->reset = at91_spi_reset;
+    dc->props = at91_spi_properties;
 }
 
-device_init(at91_spi_register)
+static TypeInfo at91_spi_info = {
+    .name = "at91,spi",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(SPIState),
+    .class_init    = at91_spi_class_init,
+};
+
+static void at91_spi_register_types(void)
+{
+    type_register_static(&at91_spi_info);
+}
+
+type_init(at91_spi_register_types)
