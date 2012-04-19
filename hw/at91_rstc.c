@@ -36,7 +36,6 @@
 
 #define CR_PROCRST       0x01 /* Processor Reset */
 #define CR_PERRST        0x04 /* Peripheral Reset */
-#define CR_EXTRST        0x08 /* External Reset */
 
 #define SR_URSTS         0x01 /* User Reset Status */
 #define SR_BODSTS        0x02 /* Brownout Detection Status */
@@ -44,11 +43,13 @@
 
 typedef struct RSTCState {
     SysBusDevice busdev;
+    MemoryRegion rstc_regs_region;
     uint32_t sr;
     uint32_t mr;
 } RSTCState;
 
-static uint32_t at91_rstc_mem_read(void *opaque, target_phys_addr_t offset)
+static uint64_t at91_rstc_mem_read(void *opaque, target_phys_addr_t offset, 
+        unsigned size)
 {
     RSTCState *s = opaque;
 
@@ -64,7 +65,7 @@ static uint32_t at91_rstc_mem_read(void *opaque, target_phys_addr_t offset)
 }
 
 static void at91_rstc_mem_write(void *opaque, target_phys_addr_t offset,
-                uint32_t value)
+                uint64_t value, unsigned size)
 {
     RSTCState *s = opaque;
 
@@ -83,7 +84,8 @@ static void at91_rstc_mem_write(void *opaque, target_phys_addr_t offset,
 }
 
 #ifdef DEBUG_RSTC
-static uint32_t at91_rstc_mem_read_dbg(void *opaque, target_phys_addr_t offset)
+static uint32_t at91_rstc_mem_read_dbg(void *opaque, target_phys_addr_t offset,
+        unsigned size)
 {
     uint32_t value = at91_rstc_mem_read(opaque, offset);
     printf("%s offset=%x val=%x\n", __func__, offset, value);
@@ -91,7 +93,7 @@ static uint32_t at91_rstc_mem_read_dbg(void *opaque, target_phys_addr_t offset)
 }
 
 static void at91_rstc_mem_write_dbg(void *opaque, target_phys_addr_t offset,
-                uint32_t value)
+                uint32_t value, unsigned size)
 {
     printf("%s offset=%x val=%x\n", __func__, offset, value);
     at91_rstc_mem_write(opaque, offset, value);
@@ -101,38 +103,11 @@ static void at91_rstc_mem_write_dbg(void *opaque, target_phys_addr_t offset,
 #define at91_rstc_mem_write at91_rstc_mem_write_dbg
 #endif
 
-static CPUReadMemoryFunc *at91_rstc_readfn[] = {
-    at91_rstc_mem_read,
-    at91_rstc_mem_read,
-    at91_rstc_mem_read,
+static const MemoryRegionOps at91_rstc_mmio_ops = {
+    .read = at91_rstc_mem_read,
+    .write = at91_rstc_mem_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
-
-static CPUWriteMemoryFunc *at91_rstc_writefn[] = {
-    at91_rstc_mem_write,
-    at91_rstc_mem_write,
-    at91_rstc_mem_write,
-};
-
-static void at91_rstc_save(QEMUFile *f, void *opaque)
-{
-    RSTCState *s = opaque;
-
-    qemu_put_be32(f, s->sr);
-    qemu_put_be32(f, s->mr);
-}
-
-static int at91_rstc_load(QEMUFile *f, void *opaque, int version_id)
-{
-    RSTCState *s = opaque;
-
-    if (version_id != 1)
-        return -EINVAL;
-
-    s->sr = qemu_get_be32(f);
-    s->mr = qemu_get_be32(f);
-
-    return 0;
-}
 
 static void at91_rstc_reset(void *opaque)
 {
@@ -142,23 +117,51 @@ static void at91_rstc_reset(void *opaque)
     s->mr = 0;
 }
 
-static void at91_rstc_init(SysBusDevice *dev)
+static const VMStateDescription vmstate_at91_rstc = {
+    .name = "at91,rstc",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField[]) {
+        VMSTATE_UINT32(sr, RSTCState),
+        VMSTATE_UINT32(mr, RSTCState),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static int at91_rstc_init(SysBusDevice *dev)
 {
     RSTCState *s = FROM_SYSBUS(typeof (*s), dev);
-    int rstc_regs;
 
-    rstc_regs = cpu_register_io_memory(at91_rstc_readfn, at91_rstc_writefn, s);
-    sysbus_init_mmio(dev, RSTC_SIZE, rstc_regs);
+    memory_region_init_io(&s->rstc_regs_region, &at91_rstc_mmio_ops, s, 
+            "at91,rstc", RSTC_SIZE);
 
-    at91_rstc_reset(s);
-    qemu_register_reset(at91_rstc_reset, s);
+    sysbus_init_mmio(dev, &s->rstc_regs_region);
 
-    register_savevm("at91_rstc", -1, 1, at91_rstc_save, at91_rstc_load, s);
+    return 0;
 }
 
-static void at91_rstc_register(void)
+
+static void at91_rstc_class_init(ObjectClass *klass, void *data)
 {
-    sysbus_register_dev("at91,rstc", sizeof(RSTCState), at91_rstc_init);
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = at91_rstc_init;
+    dc->reset = at91_rstc_reset;
+    dc->vmsd = &vmstate_at91_rstc;
 }
 
-device_init(at91_rstc_register)
+static TypeInfo at91_rstc_info = {
+    .name  = "at91,rstc",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size  = sizeof(RSTCState),
+    .class_init    = at91_rstc_class_init,
+};
+
+static void at91_rstc_register_types(void)
+{
+    type_register_static(&at91_rstc_info);
+}
+
+type_init(at91_rstc_register_types)
