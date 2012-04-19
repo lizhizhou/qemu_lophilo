@@ -391,8 +391,7 @@ obj-arm-y += z2.o
 obj-arm-y += musicpal.o bitbang_i2c.o marvell_88w8618_audio.o
 obj-arm-y += at91_aic.o at91_dbgu.o at91_pdc.o at91_pmc.o at91_pit.o 
 obj-arm-y += at91_intor.o at91_pio.o at91_emac.o at91_spi.o at91_rtt.o
-obj-arm-y += at91_rstc.o at91_tc.o at91_lcdc.o    
-#at91_nand.o 
+obj-arm-y += at91_rstc.o at91_tc.o at91_lcdc.o at91_nand.o 
 # at91pes.o     at91sam9.o
 obj-arm-y += lophilo.o
 obj-arm-y += framebuffer.o
