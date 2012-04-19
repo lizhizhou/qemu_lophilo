@@ -29,6 +29,8 @@
 #include "net.h"
 #include "flash.h"
 #include "block.h"
+#include "blockdev.h"
+#include "exec-memory.h"
 
 #define NOR_FLASH_ADDR 0x100000
 #define NOR_FLASH_SIZE 0x20000
@@ -50,6 +52,9 @@ static void at91pes_init(ram_addr_t ram_size,
     DeviceState *pmc;
     DeviceState *pit;
     DriveInfo *dinfo;
+    MemoryRegion *address_space_mem = get_system_memory();
+    MemoryRegion *phys_sdram = g_new(MemoryRegion, 1);
+
     uint32_t keys[] = {
             2 /* 1 */, 3 /* 2 */, 4 /* 3 */, 30 /* A */,
             5 /* 4 */, 6 /* 5 */, 7 /* 6 */, 48 /* B */,
@@ -67,9 +72,13 @@ static void at91pes_init(ram_addr_t ram_size,
     }
 
     /* RAM at address zero. */
-    ram_addr = qemu_ram_alloc(ram_size);
-    //cpu_register_physical_memory(0, 0x100000, ram_addr | IO_MEM_RAM);
-    cpu_register_physical_memory(0x200000, ram_size, ram_addr | IO_MEM_RAM);
+    size_t sdram_size               = 128 * 1024 * 1024;
+    size_t flash_sector_size        = 128 * 1024;
+    size_t flash_size               = 32 * 1024 * 1024;
+    target_phys_addr_t sdram_base   = 0x20000000;
+    memory_region_init_ram(phys_sdram, "at91.sdram", sdram_size);
+    vmstate_register_ram_global(phys_sdram);
+    memory_region_add_subregion(address_space_mem, sdram_base, phys_sdram);
 
     cpu_pic = arm_pic_init_cpu(env);
     dev = sysbus_create_varargs("at91,aic", 0xFFFFF000,
@@ -97,7 +106,7 @@ static void at91pes_init(ram_addr_t ram_size,
 
     qemu_check_nic_model(&nd_table[0], "at91");
     dev = qdev_create(NULL, "at91,emac");
-    dev->nd = &nd_table[0];
+    //dev->nic = &nd_table[0];
     qdev_init(dev);
     sysbus_mmio_map(sysbus_from_qdev(dev), 0, 0xFFFDC000);
     sysbus_connect_irq(sysbus_from_qdev(dev), 0, pic[16]);
@@ -126,7 +135,7 @@ static void at91pes_init(ram_addr_t ram_size,
     dinfo = drive_get(IF_PFLASH, 0, 0);
     if (dinfo) {
         int ret;
-        ram_addr_t nor_flash_mem = qemu_ram_alloc(NOR_FLASH_SIZE);
+        ram_addr_t nor_flash_mem = g_malloc(NOR_FLASH_SIZE);
         if (!nor_flash_mem) {
             fprintf(stderr, "Can not allocate mem for NOR flash\n");
             exit(EXIT_FAILURE);
@@ -137,10 +146,12 @@ static void at91pes_init(ram_addr_t ram_size,
             exit(EXIT_FAILURE);
         }
         
-        cpu_register_physical_memory(0, NOR_FLASH_SIZE,
-                                     nor_flash_mem  | IO_MEM_ROMD);
-        cpu_register_physical_memory(NOR_FLASH_ADDR, NOR_FLASH_SIZE,
-                                     nor_flash_mem | IO_MEM_ROMD);
+        //TODO: figure out how to allocate memory. Should nor flash 
+        // be another device?
+        //cpu_register_physical_memory(0, NOR_FLASH_SIZE,
+        //                             nor_flash_mem  | IO_MEM_ROMD);
+        //cpu_register_physical_memory(NOR_FLASH_ADDR, NOR_FLASH_SIZE,
+        //                             nor_flash_mem | IO_MEM_ROMD);
         env->regs[15] = NOR_FLASH_ADDR;
     } else {
         at91pes_binfo.ram_size = ram_size;
