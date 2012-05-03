@@ -68,82 +68,57 @@ static void rotary_keyboard_event(void *opaque, int keycode)
     s->extension = 0;
 }
 
-static void rotary_save(QEMUFile *f, void *opaque)
-{
-    RotaryCoderState *s = opaque;
+static const VMStateDescription vmstate_rotary = {
+    .name = "gpio,rotary",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields = (VMStateField[]) {
+        VMSTATE_UINT8(state, RotaryCoderState),
+        VMSTATE_UINT8(extension, RotaryCoderState),
+        VMSTATE_END_OF_LIST()
+    }
+};
 
-    qemu_put_byte(f, s->state);
-    qemu_put_byte(f, s->extension);
-}
 
-static int rotary_load(QEMUFile *f, void *opaque, int version_id)
-{
-    RotaryCoderState *s = opaque;
-
-    if (version_id != 1)
-        return -EINVAL;
-
-    s->state = qemu_get_byte(f);
-    s->extension = qemu_get_byte(f);
-
-    return 0;
-}
-
-/*
-static void rotary_late_init(DeviceState *dev)
-{
-    RotaryCoderState *s = FROM_SYSBUS(RotaryCoderState, sysbus_from_qdev(dev));
-
-    rotary_update(s);
-}
-*/
-
-static void rotary_init(SysBusDevice *dev)
+static int rotary_init(SysBusDevice *dev)
 {
     RotaryCoderState *s = FROM_SYSBUS(RotaryCoderState, dev);
 
     qdev_init_gpio_out(&dev->qdev, s->out, 2);
     qemu_add_kbd_event_handler(rotary_keyboard_event, s);
-    register_savevm("gpio_rotary", -1, 1, rotary_save, rotary_load, s);
+
+    return 0;
 }
 
-static SysBusDeviceInfo rotary_info = {
-    .init = rotary_init,
-    /* .qdev.late_init = rotary_late_init, */
-    .qdev.name  = "gpio,rotary",
-    .qdev.size  = sizeof(RotaryCoderState),
-    .qdev.props = (Property[]) {
-        {
-            .name   = "key-left",
-            .info   = &qdev_prop_uint32,
-            .offset = offsetof(RotaryCoderState, key_left),
-            .defval = (uint32_t[]) { 0xcb },
-        },
-        {
-            .name   = "key-right",
-            .info   = &qdev_prop_uint32,
-            .offset = offsetof(RotaryCoderState, key_right),
-            .defval = (uint32_t[]) { 0xcd },
-        },
-        {
-            .name   = "key-left-alt",
-            .info   = &qdev_prop_uint32,
-            .offset = offsetof(RotaryCoderState, key_left_alt),
-            .defval = (uint32_t[]) { 0x4b },
-        },
-        {
-            .name   = "key-right-alt",
-            .info   = &qdev_prop_uint32,
-            .offset = offsetof(RotaryCoderState, key_right_alt),
-            .defval = (uint32_t[]) { 0x4d },
-        },
-        {/* end of list */}
-    }
+static Property rotary_properties[] = {
+    DEFINE_PROP_UINT8("key-left", RotaryCoderState, key_left, 0xcb),
+    DEFINE_PROP_UINT8("key-right", RotaryCoderState, key_right, 0xcd),
+    DEFINE_PROP_UINT8("key-left-alt", RotaryCoderState, key_left_alt, 0x4b),
+    DEFINE_PROP_UINT8("key-right-alt", RotaryCoderState, key_left, 0x4d),
+    DEFINE_PROP_END_OF_LIST(),
 };
 
-static void rotary_register(void)
+static void rotary_class_init(ObjectClass *klass, void *data)
 {
-    sysbus_register_withprop(&rotary_info);
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = rotary_init;
+    dc->props = rotary_properties;
+    dc->vmsd = &vmstate_rotary;
 }
 
-device_init(rotary_register)
+static TypeInfo rotary_info = {
+    .name  = "gpio,rotary",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size  = sizeof(RotaryCoderState),
+    .class_init = rotary_class_init,
+};
+
+static void rotary_register_types(void)
+{
+    type_register_static(&rotary_info);
+}
+
+type_init(rotary_register_types)
