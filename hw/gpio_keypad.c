@@ -29,7 +29,7 @@ typedef struct KeyPadState {
     SysBusDevice busdev;
     qemu_irq out[8];
     uint32_t in[8];
-    uint32_t *keys;
+    void *keys;
     uint16_t keymask;
     uint16_t keymap[256];
     uint8_t extension;
@@ -95,78 +95,60 @@ static void keypad_keyboard_event(void *opaque, int keycode)
     keypad_update(s);
 }
 
-static void keypad_save(QEMUFile *f, void *opaque)
-{
-    KeyPadState *s = opaque;
-    int i;
-
-    for (i = 0; i < 8; i++) {
-        qemu_put_be32(f, s->in[i]);
+static const VMStateDescription vmstate_keypad = {
+    .name = "gpio,keypad",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields = (VMStateField[]) {
+        VMSTATE_UINT32_ARRAY(in, KeyPadState, 8),
+        VMSTATE_UINT16(keymask, KeyPadState),
+        VMSTATE_UINT8(extension, KeyPadState),
+        VMSTATE_END_OF_LIST()
     }
-    qemu_put_be16(f, s->keymask);
-    qemu_put_byte(f, s->extension);
-}
+};
 
-static int keypad_load(QEMUFile *f, void *opaque, int version_id)
-{
-    KeyPadState *s = opaque;
-    int i;
-
-    if (version_id != 1)
-        return -EINVAL;
-
-    for (i = 0; i < 8; i++) {
-        s->in[i] = qemu_get_be32(f);
-    }
-    s->keymask = qemu_get_be16(f);
-    s->extension = qemu_get_byte(f);
-
-    return 0;
-}
-
-
-/*
-static void keypad_late_init(DeviceState *dev)
-{
-    KeyPadState *s = FROM_SYSBUS(KeyPadState, sysbus_from_qdev(dev));
-
-    keypad_update(s);
-}
-*/
-
-static void keypad_init(SysBusDevice *dev)
+static int keypad_init(SysBusDevice *dev)
 {
     KeyPadState *s = FROM_SYSBUS(KeyPadState, dev);
     int i;
+    uint32* keys = s->keys;
 
     for (i = 0; i < 16; i++) {
-        s->keymap[s->keys[i] & 0xff] = 1 << i;
+        s->keymap[keys[i] & 0xff] = 1 << i;
     }
 
     qdev_init_gpio_in(&dev->qdev, keypad_set_pin, 8);
     qdev_init_gpio_out(&dev->qdev, s->out, 8);
     qemu_add_kbd_event_handler(keypad_keyboard_event, s);
-    register_savevm("gpio_keypad", -1, 1, keypad_save, keypad_load, s);
+    return 0;
 }
 
-static SysBusDeviceInfo keypad_info = {
-    .init = keypad_init,
-    /* .qdev.late_init = keypad_late_init, */
-    .qdev.name  = "gpio,keypad",
-    .qdev.size  = sizeof(KeyPadState),
-    .qdev.props = (Property[]) {
-        {
-            .name   = "keys",
-            .info   = &qdev_prop_ptr, /* FIXME: Make it array! */
-            .offset = offsetof(KeyPadState, keys),
-        },
-        {/* end of list */}
-    }
+static Property keypad_properties[] = {
+    DEFINE_PROP_PTR("keys", KeyPadState, keys),
+    DEFINE_PROP_END_OF_LIST(),
 };
 
-static void keypad_register(void)
+static void keypad_class_init(ObjectClass *klass, void *data)
 {
-    sysbus_register_withprop(&keypad_info);
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = keypad_init;
+    dc->props = keypad_properties;
+    dc->vmsd = &vmstate_keypad;
 }
 
-device_init(keypad_register)
+static TypeInfo keypad_info = {
+    .name  = "gpio,keypad",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size  = sizeof(KeyPadState),
+    .class_init    = keypad_class_init,
+};
+
+static void keypad_register_types(void)
+{
+    type_register_static(&keypad_info);
+}
+
+type_init(keypad_register_types)
