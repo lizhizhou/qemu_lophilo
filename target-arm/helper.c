@@ -57,9 +57,13 @@ static void cpu_reset_model_id(CPUARMState *env, uint32_t id)
 {
     env->cp15.c0_cpuid = id;
     switch (id) {
+    case ARM_CPUID_ARM7TDMI:
+        set_feature(env, ARM_FEATURE_ABORT_BU);
+        break;
     case ARM_CPUID_ARM926:
         set_feature(env, ARM_FEATURE_V5);
         set_feature(env, ARM_FEATURE_VFP);
+        set_feature(env, ARM_FEATURE_CP15);
         env->vfp.xregs[ARM_VFP_FPSID] = 0x41011090;
         env->cp15.c0_cachetype = 0x1dd20d2;
         env->cp15.c1_sys = 0x00090078;
@@ -74,6 +78,7 @@ static void cpu_reset_model_id(CPUARMState *env, uint32_t id)
         set_feature(env, ARM_FEATURE_V5);
         set_feature(env, ARM_FEATURE_VFP);
         set_feature(env, ARM_FEATURE_AUXCR);
+        set_feature(env, ARM_FEATURE_CP15);
         env->vfp.xregs[ARM_VFP_FPSID] = 0x410110a0;
         env->cp15.c0_cachetype = 0x1dd20d2;
         env->cp15.c1_sys = 0x00090078;
@@ -81,6 +86,7 @@ static void cpu_reset_model_id(CPUARMState *env, uint32_t id)
     case ARM_CPUID_ARM1136:
         /* This is the 1136 r1, which is a v6K core */
         set_feature(env, ARM_FEATURE_V6K);
+        set_feature(env, ARM_FEATURE_CP15);
         /* Fall through */
     case ARM_CPUID_ARM1136_R2:
         /* What qemu calls "arm1136_r2" is actually the 1136 r0p2, ie an
@@ -89,6 +95,7 @@ static void cpu_reset_model_id(CPUARMState *env, uint32_t id)
          */
         set_feature(env, ARM_FEATURE_V6);
         set_feature(env, ARM_FEATURE_VFP);
+        set_feature(env, ARM_FEATURE_CP15);
         /* These ID register values are correct for 1136 but may be wrong
          * for 1136_r2 (in particular r0p2 does not actually implement most
          * of the ID registers).
@@ -105,6 +112,7 @@ static void cpu_reset_model_id(CPUARMState *env, uint32_t id)
         set_feature(env, ARM_FEATURE_V6K);
         set_feature(env, ARM_FEATURE_VFP);
         set_feature(env, ARM_FEATURE_VAPA);
+        set_feature(env, ARM_FEATURE_CP15);
         env->vfp.xregs[ARM_VFP_FPSID] = 0x410120b5;
         env->vfp.xregs[ARM_VFP_MVFR0] = 0x11111111;
         env->vfp.xregs[ARM_VFP_MVFR1] = 0x00000000;
@@ -117,6 +125,7 @@ static void cpu_reset_model_id(CPUARMState *env, uint32_t id)
         set_feature(env, ARM_FEATURE_V6K);
         set_feature(env, ARM_FEATURE_VFP);
         set_feature(env, ARM_FEATURE_VAPA);
+        set_feature(env, ARM_FEATURE_CP15);
         env->vfp.xregs[ARM_VFP_FPSID] = 0x410120b4;
         env->vfp.xregs[ARM_VFP_MVFR0] = 0x11111111;
         env->vfp.xregs[ARM_VFP_MVFR1] = 0x00000000;
@@ -129,6 +138,7 @@ static void cpu_reset_model_id(CPUARMState *env, uint32_t id)
         set_feature(env, ARM_FEATURE_VFP3);
         set_feature(env, ARM_FEATURE_NEON);
         set_feature(env, ARM_FEATURE_THUMB2EE);
+        set_feature(env, ARM_FEATURE_CP15);
         env->vfp.xregs[ARM_VFP_FPSID] = 0x410330c0;
         env->vfp.xregs[ARM_VFP_MVFR0] = 0x11110222;
         env->vfp.xregs[ARM_VFP_MVFR1] = 0x00011100;
@@ -147,6 +157,7 @@ static void cpu_reset_model_id(CPUARMState *env, uint32_t id)
         set_feature(env, ARM_FEATURE_VFP_FP16);
         set_feature(env, ARM_FEATURE_NEON);
         set_feature(env, ARM_FEATURE_THUMB2EE);
+        set_feature(env, ARM_FEATURE_CP15);
         /* Note that A9 supports the MP extensions even for
          * A9UP and single-core A9MP (which are both different
          * and valid configurations; we don't model A9UP).
@@ -172,6 +183,7 @@ static void cpu_reset_model_id(CPUARMState *env, uint32_t id)
         set_feature(env, ARM_FEATURE_ARM_DIV);
         set_feature(env, ARM_FEATURE_V7MP);
         set_feature(env, ARM_FEATURE_GENERIC_TIMER);
+        set_feature(env, ARM_FEATURE_CP15);
         env->vfp.xregs[ARM_VFP_FPSID] = 0x410430f0;
         env->vfp.xregs[ARM_VFP_MVFR0] = 0x10110222;
         env->vfp.xregs[ARM_VFP_MVFR1] = 0x11111111;
@@ -201,6 +213,7 @@ static void cpu_reset_model_id(CPUARMState *env, uint32_t id)
     case ARM_CPUID_TI925T:
         set_feature(env, ARM_FEATURE_V4T);
         set_feature(env, ARM_FEATURE_OMAPCP);
+        set_feature(env, ARM_FEATURE_CP15);
         env->cp15.c0_cpuid = ARM_CPUID_TI925T; /* Depends on wiring.  */
         env->cp15.c0_cachetype = 0x5109149;
         env->cp15.c1_sys = 0x00000070;
@@ -214,6 +227,7 @@ static void cpu_reset_model_id(CPUARMState *env, uint32_t id)
     case ARM_CPUID_PXA262:
         set_feature(env, ARM_FEATURE_V5);
         set_feature(env, ARM_FEATURE_XSCALE);
+        set_feature(env, ARM_FEATURE_CP15);
         /* JTAG_ID is ((id << 28) | 0x09265013) */
         env->cp15.c0_cachetype = 0xd172172;
         env->cp15.c1_sys = 0x00000078;
@@ -226,6 +240,7 @@ static void cpu_reset_model_id(CPUARMState *env, uint32_t id)
     case ARM_CPUID_PXA270_C5:
         set_feature(env, ARM_FEATURE_V5);
         set_feature(env, ARM_FEATURE_XSCALE);
+        set_feature(env, ARM_FEATURE_CP15);
         /* JTAG_ID is ((id << 28) | 0x09265013) */
         set_feature(env, ARM_FEATURE_IWMMXT);
         env->iwmmxt.cregs[ARM_IWMMXT_wCID] = 0x69051000 | 'Q';
@@ -235,6 +250,7 @@ static void cpu_reset_model_id(CPUARMState *env, uint32_t id)
     case ARM_CPUID_SA1100:
     case ARM_CPUID_SA1110:
         set_feature(env, ARM_FEATURE_STRONGARM);
+        set_feature(env, ARM_FEATURE_CP15);
         env->cp15.c1_sys = 0x00000070;
         break;
     default:
@@ -444,6 +460,7 @@ struct arm_cpu_t {
 };
 
 static const struct arm_cpu_t arm_cpu_names[] = {
+    { ARM_CPUID_ARM7TDMI, "arm7tdmi"},
     { ARM_CPUID_ARM926, "arm926"},
     { ARM_CPUID_ARM946, "arm946"},
     { ARM_CPUID_ARM1026, "arm1026"},
