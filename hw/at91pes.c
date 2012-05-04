@@ -77,9 +77,10 @@ static void at91pes_init(ram_addr_t ram_size,
     size_t flash_sector_size        = 128 * 1024;
     size_t flash_size               = 32 * 1024 * 1024;
     target_phys_addr_t sdram_base   = 0x20000000;
+
     memory_region_init_ram(phys_sdram, "at91.sdram", sdram_size);
     vmstate_register_ram_global(phys_sdram);
-    memory_region_add_subregion(address_space_mem, sdram_base, phys_sdram);
+    memory_region_add_subregion(address_space_mem, 0, phys_sdram);
 
     cpu_pic = arm_pic_init_cpu(env);
     dev = sysbus_create_varargs("at91,aic", 0xFFFFF000,
@@ -152,12 +153,8 @@ static void at91pes_init(ram_addr_t ram_size,
             exit(EXIT_FAILURE);
         }
         
-        //TODO: figure out how to allocate memory. Should nor flash 
-        // be another device?
-        //cpu_register_physical_memory(0, NOR_FLASH_SIZE,
-        //                             nor_flash_mem  | IO_MEM_ROMD);
-        //cpu_register_physical_memory(NOR_FLASH_ADDR, NOR_FLASH_SIZE,
-        //                             nor_flash_mem | IO_MEM_ROMD);
+        memory_region_init_ram(nor_flash_mem, "at91pes.sram", NOR_FLASH_SIZE);
+        memory_region_add_subregion(address_space_mem, NOR_FLASH_ADDR, nor_flash_mem);
         env->regs[15] = NOR_FLASH_ADDR;
     } else {
         at91pes_binfo.ram_size = ram_size;
