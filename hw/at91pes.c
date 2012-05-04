@@ -52,6 +52,7 @@ static void at91pes_init(ram_addr_t ram_size,
     DeviceState *pmc;
     DeviceState *pit;
     DriveInfo *dinfo;
+    SysBusDevice* s;
     MemoryRegion *address_space_mem = get_system_memory();
     MemoryRegion *phys_sdram = g_new(MemoryRegion, 1);
 
@@ -95,8 +96,13 @@ static void at91pes_init(ram_addr_t ram_size,
     }
 
     sysbus_create_simple("at91,dbgu", 0xFFFFF200, pic1[0]);
-    pmc = sysbus_create_simple("at91,pmc", 0xFFFFFC00, pic1[1]);
+    pmc = qdev_create(NULL, "at91,pmc");
     qdev_prop_set_uint32(pmc, "mo_freq", 9216000);
+    s = sysbus_from_qdev(pmc);
+    qdev_init_nofail(pmc);
+    sysbus_mmio_map(s, 0, 0xFFFFFC00);
+    sysbus_connect_irq(s, 0, pic1[1]);
+
     sysbus_create_varargs("at91,rstc", 0xFFFFFD00, NULL);
     pioa = sysbus_create_simple("at91,pio", 0xFFFFF400, pic[2]);
     piob = sysbus_create_simple("at91,pio", 0xFFFFF600, pic[3]);

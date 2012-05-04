@@ -122,7 +122,7 @@ static void at91_dbgu_receive(void *opaque, const uint8_t *buf, int size)
         s->sr &= ~SR_RXRDY;
 }
 
-static int at91_dbgu_can_receive(void *opaque)
+static int at91_dbgu_can_receive(DBGUState *opaque)
 {
     DBGUState *s = opaque;
 #if 0/*def DEBUG_DBGU*/
@@ -345,6 +345,7 @@ static int at91_dbgu_init(SysBusDevice *dev)
             "at91,dbgu", DBGU_SIZE);
     sysbus_init_mmio(dev, &s->ser_regs_region);
 
+    s->chr = qemu_char_get_next_serial();
     qemu_chr_add_handlers(s->chr, at91_dbgu_can_receive,
                           at91_dbgu_receive, at91_dbgu_event, s);
     return 0;
