@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "ptimer.h"
+
 #include "hw.h"
 #include "arm-misc.h"
 #include "primecell.h"
@@ -71,7 +73,7 @@ struct at91sam9_state {
     QEMUTimer *dbgu_tr_timer;
     ptimer_state *pitc_timer;
     int timer_active;
-    CPUState *env;
+    CPUARMState *env;
     qemu_irq *qirq;
     ram_addr_t bootrom;
     int rom_size;
@@ -95,7 +97,10 @@ static void at91_bus_matrix_write(void *opaque, target_phys_addr_t offset,
     case MATRIX_MRCR:
         DEBUG("write to MATRIX mrcr reg\n");
         if (value & (AT91C_MATRIX_RCA926I | AT91C_MATRIX_RCA926D)) {
-            cpu_register_physical_memory(0x0, 80 * 1024, sam9->internal_sram | IO_MEM_RAM);
+            //cpu_register_physical_memory(0x0, 80 * 1024, sam9->internal_sram | IO_MEM_RAM);
+          memory_region_init_ram(sam9->internal_sram, "at91sam9.sram", 80*1024);
+          vmstate_register_ram_global(sam9->internal_sram);
+          memory_region_add_subregion(address_space_mem, 0x0, sam9->internal_sram);
         }
         break;
     default:
@@ -228,7 +233,7 @@ static CPUWriteMemoryFunc *at91_periph_writefn[] = {
     at91_periph_write
 };
 
-CPUState *g_env;
+CPUARMState *g_env;
 
 static void at91sam9_init(ram_addr_t ram_size,
                           const char *boot_device,
@@ -237,7 +242,7 @@ static void at91sam9_init(ram_addr_t ram_size,
                           const char *initrd_filename,
                           const char *cpu_model)
 {
-    CPUState *env;
+    CPUARMState *env;
     DriveInfo *dinfo;
     struct at91sam9_state *sam9;
     int iomemtype;
