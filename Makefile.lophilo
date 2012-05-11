@@ -1,5 +1,6 @@
 export LOPHILO_TARGET_ARCH=i686
 include ../../Makefile.common
+include ../../Makefile.microsd
 
 .PHONY: qemu-arm clean install clear-cache
 
@@ -50,3 +51,7 @@ debpkg:
 	dpkg-sig -k ${GPG_KEY} --sign builder ${DEBPKG_NAME}
 	sudo reprepro --basedir /var/www/repos/apt/${DEB_REPO} includedeb ${DEB_CODENAME} ${DEBPKG_NAME}
 	rm -f ${DEBPKG_NAME}
+
+run: /media/lophilofat32
+	sudo ./arm-softmmu/qemu-system-arm -M lophilo -kernel /media/lophilofat32/zImage
+	pumount ${LOPHILOFAT32DEV} 
