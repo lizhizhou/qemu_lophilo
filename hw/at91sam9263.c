@@ -261,7 +261,7 @@ static void at91sam9263_init(MemoryRegion* ram_size,
     DEBUG("begin, ram_size %llu, boot dev %s\n", (unsigned long long)ram_size,
           boot_device ? boot_device : "<empty>");
 
-    if (nb_option_roms && boot_device[0] == 'n') {
+    if (option_rom[0].name && boot_device[0] == 'n') {
         printf("Emulate ROM code\n");
         bms = 1;
     } else {
@@ -400,6 +400,7 @@ static void at91sam9263_init(MemoryRegion* ram_size,
             at91_nand_register(nand_state);
 
             // fake loading from SPI flash to internal ram
+            // FIXME
             //int flash_size = load_image_targphys(dinfo->bdrv->filename, 0x00300000, 0x00100000); //~1MB
             //printf("load flash to iram, size %d\n", flash_size);
         } else {
