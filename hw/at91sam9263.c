@@ -16,13 +16,15 @@
 #include "net.h"
 #include "sysemu.h"
 #include "spi.h"
-#include "flash.h"
 #include "boards.h"
 #include "qemu-char.h"
 #include "qemu-timer.h"
 #include "sysbus.h"
 #include "at91.h"
 #include "../block_int.h"
+#include "block.h"
+#include "blockdev.h"
+#include "nand.h"
 
 #include "at91sam9263_defs.h"
 
@@ -61,7 +63,7 @@ struct dbgu_state {
     CharDriverState *chr;
 };
 
-struct at91sam9_state {
+struct at91sam9263_state {
     uint32_t bus_matrix_regs[0x100 / 4];
     uint32_t ccfg_regs[(0x01FC - 0x0110 + 1) / sizeof(uint32_t)];
     uint32_t sdramc0_regs[(AT91_SMC0_BASE - AT91_SDRAMC0_BASE) / sizeof(uint32_t)];
@@ -69,19 +71,20 @@ struct at91sam9_state {
     uint32_t usart0_regs[0x1000 / sizeof(uint32_t)];
 //    struct dbgu_state dbgu;
     pflash_t *norflash;
-    ram_addr_t internal_sram;
+    MemoryRegion* internal_sram;
+    MemoryRegion* internal_periph;
     QEMUTimer *dbgu_tr_timer;
     ptimer_state *pitc_timer;
     int timer_active;
     CPUARMState *env;
     qemu_irq *qirq;
-    ram_addr_t bootrom;
+    MemoryRegion* bootrom;
     int rom_size;
 };
 
 static uint32_t at91_bus_matrix_read(void *opaque, target_phys_addr_t offset)
 {
-    struct at91sam9_state *sam9 = (struct at91sam9_state *)opaque;
+    struct at91sam9263_state *sam9 = (struct at91sam9263_state *)opaque;
 
     TRACE("bus_matrix read offset %X\n", offset);
     return sam9->bus_matrix_regs[offset / 4];
@@ -90,7 +93,7 @@ static uint32_t at91_bus_matrix_read(void *opaque, target_phys_addr_t offset)
 static void at91_bus_matrix_write(void *opaque, target_phys_addr_t offset,
                                   uint32_t value)
 {
-    struct at91sam9_state *sam9 = (struct at91sam9_state *)opaque;
+    struct at91sam9263_state *sam9 = (struct at91sam9263_state *)opaque;
 
     TRACE("bus_matrix write offset %X, value %X\n", offset, value);
     switch (offset) {
@@ -100,6 +103,7 @@ static void at91_bus_matrix_write(void *opaque, target_phys_addr_t offset,
             //cpu_register_physical_memory(0x0, 80 * 1024, sam9->internal_sram | IO_MEM_RAM);
           memory_region_init_ram(sam9->internal_sram, "at91sam9.sram", 80*1024);
           vmstate_register_ram_global(sam9->internal_sram);
+          MemoryRegion* address_space_mem = get_system_memory();
           memory_region_add_subregion(address_space_mem, 0x0, sam9->internal_sram);
         }
         break;
@@ -109,7 +113,7 @@ static void at91_bus_matrix_write(void *opaque, target_phys_addr_t offset,
     }
 }
 
-static void at91_init_bus_matrix(struct at91sam9_state *sam9)
+static void at91_init_bus_matrix(struct at91sam9263_state *sam9)
 {
     DEBUG("begin\n");
     memset(&sam9->bus_matrix_regs, 0, sizeof(sam9->bus_matrix_regs));
@@ -117,7 +121,7 @@ static void at91_init_bus_matrix(struct at91sam9_state *sam9)
 
 static uint32_t at91_ccfg_read(void *opaque, target_phys_addr_t offset)
 {
-    struct at91sam9_state *sam9 = (struct at91sam9_state *)opaque;
+    struct at91sam9263_state *sam9 = (struct at91sam9263_state *)opaque;
 
     TRACE("ccfg read offset %X\n", offset);
     return sam9->ccfg_regs[offset / sizeof(sam9->ccfg_regs[0])];
@@ -126,7 +130,7 @@ static uint32_t at91_ccfg_read(void *opaque, target_phys_addr_t offset)
 static void at91_ccfg_write(void *opaque, target_phys_addr_t offset,
                             uint32_t value)
 {
-    struct at91sam9_state *sam9 = (struct at91sam9_state *)opaque;
+    struct at91sam9263_state *sam9 = (struct at91sam9263_state *)opaque;
 
     TRACE("ccfg write offset %X, value %X\n", offset, value);
     sam9->ccfg_regs[offset / sizeof(sam9->ccfg_regs[0])] = value;
@@ -134,7 +138,7 @@ static void at91_ccfg_write(void *opaque, target_phys_addr_t offset,
 
 static uint32_t at91_sdramc0_read(void *opaque, target_phys_addr_t offset)
 {
-    struct at91sam9_state *sam9 = (struct at91sam9_state *)opaque;
+    struct at91sam9263_state *sam9 = (struct at91sam9263_state *)opaque;
 
     TRACE("sdramc0 read offset %X\n", offset);
     return sam9->sdramc0_regs[offset / sizeof(sam9->sdramc0_regs[0])];
@@ -143,7 +147,7 @@ static uint32_t at91_sdramc0_read(void *opaque, target_phys_addr_t offset)
 static void at91_sdramc0_write(void *opaque, target_phys_addr_t offset,
                                uint32_t value)
 {
-    struct at91sam9_state *sam9 = (struct at91sam9_state *)opaque;
+    struct at91sam9263_state *sam9 = (struct at91sam9263_state *)opaque;
 
     TRACE("sdramc0 write offset %X, value %X\n", offset, value);
     sam9->sdramc0_regs[offset / sizeof(sam9->sdramc0_regs[0])] = value;
@@ -151,7 +155,7 @@ static void at91_sdramc0_write(void *opaque, target_phys_addr_t offset,
 
 static uint32_t at91_smc0_read(void *opaque, target_phys_addr_t offset)
 {
-    struct at91sam9_state *sam9 = (struct at91sam9_state *)opaque;
+    struct at91sam9263_state *sam9 = (struct at91sam9263_state *)opaque;
 
     TRACE("smc0 read offset %X\n", offset);
     return sam9->smc0_regs[offset / sizeof(sam9->smc0_regs[0])];
@@ -160,7 +164,7 @@ static uint32_t at91_smc0_read(void *opaque, target_phys_addr_t offset)
 static void at91_smc0_write(void *opaque, target_phys_addr_t offset,
                             uint32_t value)
 {
-    struct at91sam9_state *sam9 = (struct at91sam9_state *)opaque;
+    struct at91sam9263_state *sam9 = (struct at91sam9263_state *)opaque;
 
     TRACE("smc0 write offset %X, value %X\n", offset, value);
     sam9->smc0_regs[offset / sizeof(sam9->smc0_regs[0])] = value;
@@ -168,7 +172,7 @@ static void at91_smc0_write(void *opaque, target_phys_addr_t offset,
 
 static uint32_t at91_usart_read(void *opaque, target_phys_addr_t offset)
 {
-    struct at91sam9_state *sam9 = (struct at91sam9_state *)opaque;
+    struct at91sam9263_state *sam9 = (struct at91sam9263_state *)opaque;
     DEBUG("we read from %X\n", offset);
     return sam9->usart0_regs[offset / sizeof(uint32_t)];
 }
@@ -176,7 +180,7 @@ static uint32_t at91_usart_read(void *opaque, target_phys_addr_t offset)
 static void at91_usart_write(void *opaque, target_phys_addr_t offset,
                              uint32_t value)
 {
-    struct at91sam9_state *sam9 = (struct at91sam9_state *)opaque;
+    struct at91sam9263_state *sam9 = (struct at91sam9263_state *)opaque;
     DEBUG("we write to %X: %X\n", offset, value);
     sam9->usart0_regs[offset / sizeof(uint32_t)] = value;
 }
@@ -221,21 +225,15 @@ static void at91_periph_write(void *opaque, target_phys_addr_t offset,
 //    DEBUG("write to unsupported periph: addr %X, val %X\n", offset, value);
 }
 
-static CPUReadMemoryFunc *at91_periph_readfn[] = {
-    at91_periph_read,
-    at91_periph_read,
-    at91_periph_read
-};
-
-static CPUWriteMemoryFunc *at91_periph_writefn[] = {
-    at91_periph_write,
-    at91_periph_write,
-    at91_periph_write
+static const MemoryRegionOps at91_periph_mmio_ops = {
+    .read = at91_periph_read,
+    .write = at91_periph_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
 CPUARMState *g_env;
 
-static void at91sam9_init(ram_addr_t ram_size,
+static void at91sam9263_init(MemoryRegion* ram_size,
                           const char *boot_device,
                           const char *kernel_filename,
                           const char *kernel_cmdline,
@@ -244,7 +242,7 @@ static void at91sam9_init(ram_addr_t ram_size,
 {
     CPUARMState *env;
     DriveInfo *dinfo;
-    struct at91sam9_state *sam9;
+    struct at91sam9263_state *sam9;
     int iomemtype;
     qemu_irq *cpu_pic;
     qemu_irq pic[32];
@@ -256,12 +254,14 @@ static void at91sam9_init(ram_addr_t ram_size,
     int i;
     int bms;
     SPIControl *cs0_spi_handler;
+    SysBusDevice* s;
+    MemoryRegion* address_space_mem = get_system_memory();
 
-    cs0_spi_handler = qemu_mallocz(sizeof(SPIControl));
+    cs0_spi_handler = g_new(SPIControl, 1);
     DEBUG("begin, ram_size %llu, boot dev %s\n", (unsigned long long)ram_size,
           boot_device ? boot_device : "<empty>");
 
-    if (option_rom[0] && boot_device[0] == 'n') {
+    if (nb_option_roms && boot_device[0] == 'n') {
         printf("Emulate ROM code\n");
         bms = 1;
     } else {
@@ -279,29 +279,52 @@ static void at91sam9_init(ram_addr_t ram_size,
         fprintf(stderr, "Unable to find CPU definition\n");
         exit(EXIT_FAILURE);
     }
-    /* SDRAM at chipselect 1.  */
-    cpu_register_physical_memory(AT91SAM9263EK_SDRAM_OFF, AT91SAM9263EK_SDRAM_SIZE,
-                                 qemu_ram_alloc(AT91SAM9263EK_SDRAM_SIZE) | IO_MEM_RAM);
 
-    sam9 = (struct at91sam9_state *)qemu_mallocz(sizeof(*sam9));
+    sam9 = (struct at91sam9263_state *)g_new(struct at91sam9263_state, 1);
     if (!sam9) {
         fprintf(stderr, "allocation failed\n");
         exit(EXIT_FAILURE);
     }
+
     sam9->env = env;
+    /* SDRAM at chipselect 1.  */
+    //cpu_register_physical_memory(AT91SAM9263EK_SDRAM_OFF, AT91SAM9263EK_SDRAM_SIZE,
+    //                             qemu_ram_alloc(AT91SAM9263EK_SDRAM_SIZE) | IO_MEM_RAM);
+    MemoryRegion *phys_sdram = g_new(MemoryRegion, 1);
+    memory_region_init_ram(phys_sdram, "at91.sdram", AT91SAM9263EK_SDRAM_SIZE);
+    vmstate_register_ram_global(phys_sdram);
+    memory_region_add_subregion(address_space_mem, AT91SAM9263EK_SDRAM_OFF, phys_sdram);
+
     /* Internal SRAM */
-    sam9->internal_sram = qemu_ram_alloc(80 * 1024);
-    cpu_register_physical_memory(0x00300000, 80 * 1024, sam9->internal_sram | IO_MEM_RAM);
-    sam9->bootrom = qemu_ram_alloc(0x100000);
-    cpu_register_physical_memory(0x00400000, 0x100000, sam9->bootrom | IO_MEM_RAM);
-    if (option_rom[0]) {
+    //sam9->internal_sram = qemu_ram_alloc(80 * 1024);
+    //cpu_register_physical_memory(0x00300000, 80 * 1024, sam9->internal_sram | IO_MEM_RAM);
+    sam9->internal_sram = g_new(MemoryRegion, 1);
+    memory_region_init_ram(sam9->internal_sram, "at91.internal_sram", 80*1024);
+    vmstate_register_ram_global(sam9->internal_sram);
+    memory_region_add_subregion(address_space_mem, 0x00300000, sam9->internal_sram);
+
+    //sam9->bootrom = qemu_ram_alloc(0x100000);
+    //cpu_register_physical_memory(0x00400000, 0x100000, sam9->bootrom | IO_MEM_RAM);
+    sam9->bootrom = g_new(MemoryRegion, 1);
+    memory_region_init_ram(sam9->bootrom, "at91.bootrom", 0x100000);
+    vmstate_register_ram_global(sam9->bootrom);
+    memory_region_add_subregion(address_space_mem, 0x00400000, sam9->bootrom);
+
+    if (nb_option_roms) {
         sam9->rom_size = load_image_targphys(option_rom[0], 0x00400000, 0x100000);
         printf("load bootrom, size %d\n", sam9->rom_size);
     }
 
     /*Internal Peripherals */
-    iomemtype = cpu_register_io_memory(at91_periph_readfn, at91_periph_writefn, sam9);
-    cpu_register_physical_memory(0xF0000000, 0xFFFFFFFF - 0xF0000000, iomemtype);
+    //iomemtype = cpu_register_io_memory(at91_periph_readfn, at91_periph_writefn, sam9);
+    //cpu_register_physical_memory(0xF0000000, 0xFFFFFFFF - 0xF0000000, iomemtype);
+    int internal_periph_size = 0xFFFFFFFF - 0xF0000000;
+    sam9->internal_periph = g_new(MemoryRegion, 1);
+    memory_region_init_ram(sam9->internal_periph, "at91.internal_periph", internal_periph_size);
+    vmstate_register_ram_global(sam9->internal_periph);
+    memory_region_add_subregion(address_space_mem, 0xF0000000, sam9->internal_periph);
+    memory_region_init_io(sam9->internal_periph, &at91_periph_mmio_ops, sam9,
+            "at91,peripherals", internal_periph_size);
 
     cpu_pic = arm_pic_init_cpu(env);
     dev = sysbus_create_varargs("at91,aic", AT91_AIC_BASE,
@@ -318,7 +341,16 @@ static void at91sam9_init(ram_addr_t ram_size,
         pic1[i] = qdev_get_gpio_in(dev, i);
     }
     sysbus_create_simple("at91,dbgu", AT91_DBGU_BASE, pic1[0]);
-    pmc = sysbus_create_simple("at91,pmc", AT91_PMC_BASE, pic1[1]);
+
+    // INIT PMC
+    //pmc = sysbus_create_simple("at91,pmc", AT91_PMC_BASE, pic1[1]);
+    pmc = qdev_create(NULL, "at91,pmc");
+    qdev_prop_set_uint32(pmc, "mo_freq", 9216000);
+    s = sysbus_from_qdev(pmc);
+    qdev_init_nofail(pmc);
+    sysbus_mmio_map(s, 0, AT91_PMC_BASE);
+    sysbus_connect_irq(s, 0, pic1[1]);
+
     qdev_prop_set_uint32(pmc, "mo_freq", 16000000);
     pit = sysbus_create_simple("at91,pit", AT91_PITC_BASE, pic1[3]);
     sysbus_create_varargs("at91,tc", AT91_TC012_BASE, pic[19], pic[19], pic[19], NULL);
@@ -337,7 +369,7 @@ static void at91sam9_init(ram_addr_t ram_size,
 
     qemu_check_nic_model(&nd_table[0], "at91");
     dev = qdev_create(NULL, "at91,emac");
-    dev->nd = &nd_table[0];
+    //dev->nd = &nd_table[0];
     qdev_init(dev);
     sysbus_mmio_map(sysbus_from_qdev(dev), 0, AT91_EMAC_BASE);
     sysbus_connect_irq(sysbus_from_qdev(dev), 0, pic[21]);
@@ -358,17 +390,21 @@ static void at91sam9_init(ram_addr_t ram_size,
             }
             qdev_prop_set_ptr(spi, "spi_control", cs0_spi_handler);
             //rom
-            cpu_register_physical_memory(0x0, 100 * 1024,
-                                         sam9->bootrom | IO_MEM_ROMD);
-            nand_state = nand_init(NAND_MFR_MICRON, 0xda);
+            //cpu_register_physical_memory(0x0, 100 * 1024,
+            //                             sam9->bootrom | IO_MEM_ROMD);
+            memory_region_init_ram(sam9->bootrom, "at91.bootrom", 100*1024);
+            vmstate_register_ram_global(sam9->bootrom);
+            memory_region_add_subregion(address_space_mem, 0, sam9->bootrom);
+
+            nand_state = nand_init(dinfo->bdrv, NAND_MFR_MICRON, 0xda);
             at91_nand_register(nand_state);
 
             // fake loading from SPI flash to internal ram
             //int flash_size = load_image_targphys(dinfo->bdrv->filename, 0x00300000, 0x00100000); //~1MB
-            printf("load flash to iram, size %d\n", flash_size);
+            //printf("load flash to iram, size %d\n", flash_size);
         } else {
             //nor flash
-            ram_addr_t nor_flash_mem = qemu_ram_alloc(NOR_FLASH_SIZE);
+            MemoryRegion* nor_flash_mem = g_new(MemoryRegion, 1);
             if (!nor_flash_mem) {
                 fprintf(stderr, "allocation failed\n");
                 exit(EXIT_FAILURE);
@@ -389,8 +425,12 @@ static void at91sam9_init(ram_addr_t ram_size,
 
             DEBUG("register flash at 0x0\n");
             //register only part of flash, to prevent conflict with internal sram
-            cpu_register_physical_memory(0x0, 100 * 1024,
-                                         nor_flash_mem | IO_MEM_ROMD);
+            //cpu_register_physical_memory(0x0, 100 * 1024,
+            //                             nor_flash_mem | IO_MEM_ROMD);
+            memory_region_init_ram(nor_flash_mem, "at91.flash", 100*1024);
+            vmstate_register_ram_global(nor_flash_mem);
+            memory_region_add_subregion(address_space_mem, 0, nor_flash_mem);
+
         }
     } else {
         fprintf(stderr, "qemu: can not start without flash.\n");
@@ -403,12 +443,12 @@ static void at91sam9_init(ram_addr_t ram_size,
 static QEMUMachine at91sam9263ek_machine = {
     .name = "at91sam9263ek",
     .desc = "Atmel at91sam9263ek board (ARM926EJ-S)",
-    .init = at91sam9_init,
+    .init = at91sam9263_init,
 };
 
-static void at91sam9_machine_init(void)
+static void at91sam9263_machine_init(void)
 {
     qemu_register_machine(&at91sam9263ek_machine);
 }
 
-machine_init(at91sam9_machine_init)
+machine_init(at91sam9263_machine_init)

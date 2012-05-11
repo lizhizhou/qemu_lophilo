@@ -26,6 +26,22 @@ pflash_t *pflash_cfi02_register(target_phys_addr_t base,
 
 MemoryRegion *pflash_cfi01_get_memory(pflash_t *fl);
 
+/* pflash_atmel.c */
+pflash_t *pflash_cfi_atmel_register(target_phys_addr_t base, ram_addr_t off,
+				    BlockDriverState *bs,
+				    uint32_t boot_sect_len,
+				    int nb_boot_blocks,
+				    uint32_t sector_len,
+				    int nb_blocs, int width,
+				    uint16_t id0, uint16_t id1,
+				    uint16_t id2, uint16_t id3);
+
+struct SPIControl;
+/* spi_flash.c */
+extern int spi_flash_register(BlockDriverState *bs, unsigned int len,
+                              struct SPIControl *spi_control);
+
+
 /* nand.c */
 DeviceState *nand_init(BlockDriverState *bdrv, int manf_id, int chip_id);
 void nand_setpins(DeviceState *dev, uint8_t cle, uint8_t ale,

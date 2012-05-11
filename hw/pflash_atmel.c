@@ -74,7 +74,7 @@ struct pflash_t {
     uint16_t ident[4];
     target_phys_addr_t counter;
     QEMUTimer *timer;
-    ram_addr_t off;
+    MemoryRegion* off;
     int fl_mem;
     void *storage;
 };
@@ -100,18 +100,24 @@ static void pflash_timer (void *opaque)
     if (pfl->bypass) {
         pfl->wcycle = 2;
     } else {
-        cpu_register_physical_memory(pfl->base, pfl->total_len,
-                                     pfl->off | IO_MEM_ROMD | pfl->fl_mem);
+        //cpu_register_physical_memory(pfl->base, pfl->total_len,
+        //                             pfl->off | IO_MEM_ROMD | pfl->fl_mem);
+        //FIXME
+        //memory_region_init_io(pfl->base, &pflash_mmio_ops, pfl,
+        //        "atmel,pflash", pfl->total_len);
+        vmstate_register_ram_global(pfl->base);
+        MemoryRegion* system_memory = get_system_memory();
+        memory_region_add_subregion(get_system_memory(), pfl->off, pfl->base);
         pfl->wcycle = 0;
     }
     pfl->cmd = 0;
 }
 
-static uint32_t pflash_read (pflash_t *pfl, target_phys_addr_t offset,
+static uint64_t pflash_read (pflash_t *pfl, target_phys_addr_t offset,
                              int width)
 {
     target_phys_addr_t boff;
-    uint32_t ret;
+    uint64_t ret;
     uint8_t *p;
 
     ret = -1;
@@ -257,7 +263,7 @@ static inline void pflash_data_write(pflash_t *pfl, target_phys_addr_t offset,
 }
 
 static void pflash_write(pflash_t *pfl, target_phys_addr_t offset,
-                         uint32_t value, int width)
+                         uint64_t value, int width)
 {
     target_phys_addr_t boff;
     uint8_t *p;
@@ -269,7 +275,10 @@ static void pflash_write(pflash_t *pfl, target_phys_addr_t offset,
             __func__, offset, value, width, pfl->wcycle);
 
     /* Set the device in I/O access mode */
-    cpu_register_physical_memory(pfl->base, pfl->total_len, pfl->fl_mem);
+    //cpu_register_physical_memory(pfl->base, pfl->total_len, pfl->fl_mem);
+    //FIXME
+    //memory_region_init_io(pfl->base, &pflash_mmio_ops, pfl,
+    //        "atmel,pflash", total_len);
     boff = offset & (pfl->sector_len - 1);
 
     if (pfl->width == 2)
@@ -384,8 +393,9 @@ error_flash:
            __func__, offset, pfl->wcycle, pfl->cmd, value);
 
 reset_flash:
-    cpu_register_physical_memory(pfl->base, pfl->total_len,
-                                 pfl->off | IO_MEM_ROMD | pfl->fl_mem);
+    //cpu_register_physical_memory(pfl->base, pfl->total_len,
+    //                             pfl->off | IO_MEM_ROMD | pfl->fl_mem);
+    memory_region_init_ram(pfl->fl_mem, "atmel,storage", pfl->total_len);
 
     pfl->bypass = 0;
     pfl->wcycle = 0;
@@ -393,58 +403,10 @@ reset_flash:
     return;
 }
 
-
-static uint32_t pflash_readb (void *opaque, target_phys_addr_t addr)
-{
-    return pflash_read(opaque, addr, 1);
-}
-
-static uint32_t pflash_readw (void *opaque, target_phys_addr_t addr)
-{
-    pflash_t *pfl = opaque;
-
-    return pflash_read(pfl, addr, 2);
-}
-
-static uint32_t pflash_readl (void *opaque, target_phys_addr_t addr)
-{
-    pflash_t *pfl = opaque;
-
-    return pflash_read(pfl, addr, 4);
-}
-
-static void pflash_writeb (void *opaque, target_phys_addr_t addr,
-                           uint32_t value)
-{
-    pflash_write(opaque, addr, value, 1);
-}
-
-static void pflash_writew (void *opaque, target_phys_addr_t addr,
-                           uint32_t value)
-{
-    pflash_t *pfl = opaque;
-
-    pflash_write(pfl, addr, value, 2);
-}
-
-static void pflash_writel (void *opaque, target_phys_addr_t addr,
-                           uint32_t value)
-{
-    pflash_t *pfl = opaque;
-
-    pflash_write(pfl, addr, value, 4);
-}
-
-static CPUWriteMemoryFunc *  pflash_write_ops[] = {
-    &pflash_writeb,
-    &pflash_writew,
-    &pflash_writel,
-};
-
-static CPUReadMemoryFunc * pflash_read_ops[] = {
-    &pflash_readb,
-    &pflash_readw,
-    &pflash_readl,
+static const MemoryRegionOps pflash_mmio_ops = {
+    .read = pflash_read,
+    .write = pflash_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
 pflash_t *pflash_cfi_atmel_register(target_phys_addr_t base, ram_addr_t off,
@@ -462,27 +424,38 @@ pflash_t *pflash_cfi_atmel_register(target_phys_addr_t base, ram_addr_t off,
 
     total_len = boot_sect_len * nb_boot_blocks + sector_len * nb_blocs;
 
-    pfl = qemu_mallocz(sizeof(pflash_t));
-
-    pfl->storage = qemu_get_ram_ptr(off);
-    pfl->fl_mem = cpu_register_io_memory(
-        pflash_read_ops, pflash_write_ops, pfl);
+    pfl = g_new(pflash_t, 1);
     pfl->off = off;
-    cpu_register_physical_memory(base, total_len,
-                                 off | pfl->fl_mem | IO_MEM_ROMD);
+    
+    //pfl->fl_mem = cpu_register_io_memory(
+    //    pflash_read_ops, pflash_write_ops, pfl);
+    //cpu_register_physical_memory(base, total_len,
+    //                             off | pfl->fl_mem | IO_MEM_ROMD);
+    pfl->storage = g_new(MemoryRegion, 1);
+    memory_region_init_ram(pfl->storage, "atmel,storage", total_len);
+    vmstate_register_ram_global(pfl->storage);
+
+    pfl->fl_mem = g_new(MemoryRegion, 1);
+    memory_region_init_ram(pfl->fl_mem, "atmel,pflash", total_len);
+    vmstate_register_ram_global(pfl->fl_mem);
+    MemoryRegion* address_space_mem = get_system_memory();
+    memory_region_add_subregion(address_space_mem, off, pfl->fl_mem);
+    memory_region_init_io(pfl->fl_mem, &pflash_mmio_ops, pfl,
+            "atmel,pflash", total_len);
 
     pfl->bs = bs;
     if (pfl->bs) {
         /* read the initial flash content */
         ret = bdrv_read(pfl->bs, 0, pfl->storage, total_len >> 9);
         if (ret < 0) {
-            cpu_unregister_io_memory(pfl->fl_mem);
-            qemu_free(pfl);
+            //cpu_unregister_io_memory(pfl->fl_mem);
+            memory_region_destroy(pfl->fl_mem);
+            g_free(pfl);
             return NULL;
         }
     }
     pfl->ro = 0;
-    pfl->timer = qemu_new_timer(vm_clock, pflash_timer, pfl);
+    pfl->timer = qemu_new_timer(vm_clock, SCALE_MS, pflash_timer, pfl);
     pfl->base = base;
     pfl->sector_len = sector_len;
     pfl->nb_blocks = nb_blocs;

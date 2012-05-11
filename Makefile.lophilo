@@ -24,21 +24,16 @@ config:
 	cd ${OUTPUT_DIR}; ${SRC_DIR}/configure --target-list=arm-softmmu,arm-linux-user --prefix=${DEB_PREFIX} --cross-prefix=${TOOLCHAIN_PATH}/ --enable-debug --disable-werror
 
 build:
-	time -f "%E real,%U user,%S sys" make -j8 -C ${OUTPUT_DIR}
-
-install:
-	mkdir -p ${DEB_PREFIX}/bin
-	make install
-	#cp ./arm-softmmu/qemu-system-arm ${DEB_PREFIX}/bin
+	time -f "%E real,%U user,%S sys" make -C ${OUTPUT_DIR}
 	#cp ./arm-linux-user/qemu-arm ${DEB_PREFIX}/bin
 
 ifscripts: /etc/qemu-ifup /etc/qemu-ifdown
 
 /etc/qemu-ifup: 
-	sudo cp qemu-ifup /etc
+	sudo cp qemu-ifup.lophilo /etc/qemu-ifup
 
 /etc/qemu-ifdown:
-	sudo cp qemu-ifdown /etc
+	sudo cp qemu-ifdown.lophilo /etc/qemu-ifdown
 
 clean:
 	make clean

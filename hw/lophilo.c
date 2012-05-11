@@ -76,8 +76,16 @@ static void lophilo_init(ram_addr_t ram_size,
         pic1[i] = qdev_get_gpio_in(dev, i);
     }
     sysbus_create_simple("at91,dbgu", AT91_DBGU_BASE, pic1[0]);
-    pmc = sysbus_create_simple("at91,pmc", AT91_PMC_BASE, pic1[1]);
-    qdev_prop_set_uint32(pmc, "mo_freq", 16000000);
+
+    // INIT PMC
+    //pmc = sysbus_create_simple("at91,pmc", AT91_PMC_BASE, pic1[1]);
+    pmc = qdev_create(NULL, "at91,pmc");
+    qdev_prop_set_uint32(pmc, "mo_freq", 9216000);
+    s = sysbus_from_qdev(pmc);
+    qdev_init_nofail(pmc);
+    sysbus_mmio_map(s, 0, AT91_PMC_BASE);
+    sysbus_connect_irq(s, 0, pic1[1]);
+
     pit = sysbus_create_simple("at91,pit", AT91_PITC_BASE, pic1[3]);
 
     /*
