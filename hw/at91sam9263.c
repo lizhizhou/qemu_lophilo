@@ -98,9 +98,9 @@ static void at91_bus_matrix_write(void *opaque, target_phys_addr_t offset,
     TRACE("bus_matrix write offset %X, value %X\n", offset, value);
     switch (offset) {
     case MATRIX_MRCR:
-        DEBUG("write to MATRIX mrcr reg\n");
+        DEBUG("write to MATRIX mrcr reg (remap)\n");
         if (value & (AT91C_MATRIX_RCA926I | AT91C_MATRIX_RCA926D)) {
-            //cpu_register_physical_memory(0x0, 80 * 1024, sam9->internal_sram | IO_MEM_RAM);
+          //cpu_register_physical_memory(0x0, 80 * 1024, sam9->internal_sram | IO_MEM_RAM);
           memory_region_init_ram(sam9->internal_sram, "at91sam9.sram", 80*1024);
           vmstate_register_ram_global(sam9->internal_sram);
           MemoryRegion* address_space_mem = get_system_memory();
@@ -430,7 +430,7 @@ static void at91sam9263_init(MemoryRegion* ram_size,
             //                             nor_flash_mem | IO_MEM_ROMD);
             memory_region_init_ram(nor_flash_mem, "at91.flash", 100*1024);
             vmstate_register_ram_global(nor_flash_mem);
-            memory_region_add_subregion(address_space_mem, 0, nor_flash_mem);
+            memory_region_add_subregion(address_space_mem, 0x0, nor_flash_mem);
 
         }
     } else {

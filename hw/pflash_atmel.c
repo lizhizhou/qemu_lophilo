@@ -409,7 +409,8 @@ static const MemoryRegionOps pflash_mmio_ops = {
     .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
-pflash_t *pflash_cfi_atmel_register(target_phys_addr_t base, ram_addr_t off,
+pflash_t *pflash_cfi_atmel_register(target_phys_addr_t base, 
+                                    ram_addr_t off,
                                     BlockDriverState *bs,
                                     uint32_t boot_sect_len,
                                     int nb_boot_blocks,
@@ -436,12 +437,10 @@ pflash_t *pflash_cfi_atmel_register(target_phys_addr_t base, ram_addr_t off,
     vmstate_register_ram_global(pfl->storage);
 
     pfl->fl_mem = g_new(MemoryRegion, 1);
-    memory_region_init_ram(pfl->fl_mem, "atmel,pflash", total_len);
-    vmstate_register_ram_global(pfl->fl_mem);
-    MemoryRegion* address_space_mem = get_system_memory();
-    memory_region_add_subregion(address_space_mem, off, pfl->fl_mem);
     memory_region_init_io(pfl->fl_mem, &pflash_mmio_ops, pfl,
             "atmel,pflash", total_len);
+    MemoryRegion* address_space_mem = get_system_memory();
+    memory_region_add_subregion(address_space_mem, off, pfl->fl_mem);
 
     pfl->bs = bs;
     if (pfl->bs) {
@@ -455,7 +454,7 @@ pflash_t *pflash_cfi_atmel_register(target_phys_addr_t base, ram_addr_t off,
         }
     }
     pfl->ro = 0;
-    pfl->timer = qemu_new_timer(vm_clock, SCALE_MS, pflash_timer, pfl);
+    pfl->timer = qemu_new_timer_ns(vm_clock, pflash_timer, pfl);
     pfl->base = base;
     pfl->sector_len = sector_len;
     pfl->nb_blocks = nb_blocs;
