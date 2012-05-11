@@ -320,11 +320,11 @@ static void at91sam9263_init(MemoryRegion* ram_size,
     //cpu_register_physical_memory(0xF0000000, 0xFFFFFFFF - 0xF0000000, iomemtype);
     int internal_periph_size = 0xFFFFFFFF - 0xF0000000;
     sam9->internal_periph = g_new(MemoryRegion, 1);
-    memory_region_init_ram(sam9->internal_periph, "at91.internal_periph", internal_periph_size);
-    vmstate_register_ram_global(sam9->internal_periph);
-    memory_region_add_subregion(address_space_mem, 0xF0000000, sam9->internal_periph);
+    //memory_region_init_ram(sam9->internal_periph, "at91.internal_periph", internal_periph_size);
+    //vmstate_register_ram_global(sam9->internal_periph);
     memory_region_init_io(sam9->internal_periph, &at91_periph_mmio_ops, sam9,
             "at91,peripherals", internal_periph_size);
+    memory_region_add_subregion(address_space_mem, 0xF0000000, sam9->internal_periph);
 
     cpu_pic = arm_pic_init_cpu(env);
     dev = sysbus_create_varargs("at91,aic", AT91_AIC_BASE,
@@ -344,14 +344,14 @@ static void at91sam9263_init(MemoryRegion* ram_size,
 
     // INIT PMC
     //pmc = sysbus_create_simple("at91,pmc", AT91_PMC_BASE, pic1[1]);
+
     pmc = qdev_create(NULL, "at91,pmc");
-    qdev_prop_set_uint32(pmc, "mo_freq", 9216000);
+    qdev_prop_set_uint32(pmc, "mo_freq", 16000000);
     s = sysbus_from_qdev(pmc);
     qdev_init_nofail(pmc);
     sysbus_mmio_map(s, 0, AT91_PMC_BASE);
     sysbus_connect_irq(s, 0, pic1[1]);
-
-    qdev_prop_set_uint32(pmc, "mo_freq", 16000000);
+   
     pit = sysbus_create_simple("at91,pit", AT91_PITC_BASE, pic1[3]);
     sysbus_create_varargs("at91,tc", AT91_TC012_BASE, pic[19], pic[19], pic[19], NULL);
     spi = sysbus_create_simple("at91,spi", AT91_SPI0_BASE, pic[14]);
